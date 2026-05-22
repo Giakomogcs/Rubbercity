@@ -1,0 +1,2370 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.data || $json.text || $json.concatenated_data || $json.text_for_rag }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "=file_id",
+                "value": "={{ $('Set File ID - to Context').first().json.file_id }}"
+              },
+              {
+                "name": "file_title",
+                "value": "={{ $('Set File ID - to Context').first().json.file_title }}"
+              },
+              {
+                "name": "category_id",
+                "value": "={{ $('Set File ID - to Context').first().json.category_id }}"
+              },
+              {
+                "name": "code",
+                "value": "={{ $('Set File ID - to Context').first().json.code }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "52cd2a01-83ed-439b-b3dd-c9726ac68de7",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1,
+      "position": [45104, 20192]
+    },
+    {
+      "parameters": {
+        "content": "## Tool to Add a Google Drive File to Vector DB",
+        "height": 979,
+        "width": 4641,
+        "color": 5
+      },
+      "id": "03b678ed-d784-409e-9208-c627e8a8d8d6",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [41040, 19552]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Set File ID - to Context').item.json.file_id }}",
+          "mode": "id"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain"
+            }
+          }
+        }
+      },
+      "id": "df32742c-402e-45f1-a459-8a6d131239df",
+      "name": "Download File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [43376, 19920],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "1yxLK6IGIPQiU21B",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "ba84d8ce-1e3a-43c8-8cb3-15823533de4e",
+      "name": "Extract Document Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [44080, 20256],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "1d75ab6d-180a-4aa1-a61e-8f6a6d8d659f",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [44048, 19664],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0a39e6f1-4e2f-4a4f-9a4e-b7f8b1c2c3a1",
+              "leftValue": "={{ ($json.text || '').replace(/\\s+/g, '').length }}",
+              "rightValue": 20,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "135eb334-0cf3-44c8-a13e-eff6c003b8d8",
+      "name": "PDF tem texto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [44240, 19664]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pré-computa o base64 do PDF E monta o body completo da requisição OCR.\n// Roda direto após o Switch[PDF], então o item ainda tem o binário.\n// Passar o body como objeto JS (e não template string) evita qualquer\n// corrupção do base64 gigante (~10MB) na interpolação do n8n.\nconst items = $input.all();\nconst out = [];\n\nconst ctx = $('Set File ID - to Context').first().json;\nconst fileTitle = ctx?.file_title || 'document';\nconst fileId = ctx?.file_id || '(sem id)';\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  if (!item.binary) {\n    throw new Error('Sem binário no input.');\n  }\n  const binaryKey = item.binary.data ? 'data' : Object.keys(item.binary)[0];\n  let buffer = await this.helpers.getBinaryDataBuffer(i, binaryKey);\n\n  // Detecta PDF criptografado / protegido. Mesmo sem senha de abertura,\n  // PDFs com /Encrypt fazem o Azure OpenAI retornar 500. Tentamos remover\n  // a criptografia em memoria via pdf-lib (ignoreEncryption + re-save).\n  const headSample = buffer.slice(0, Math.min(buffer.length, 8192)).toString('latin1');\n  const tailSample = buffer.slice(-Math.min(buffer.length, 8192)).toString('latin1');\n  const isEncrypted = /\\/Encrypt[\\s<\\d]/.test(headSample) || /\\/Encrypt[\\s<\\d]/.test(tailSample);\n  let decrypted = false;\n  if (isEncrypted) {\n    try {\n      const { PDFDocument } = require('pdf-lib');\n      const srcDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });\n      const cleanDoc = await PDFDocument.create();\n      const pageIdx = srcDoc.getPageIndices();\n      const copied = await cleanDoc.copyPages(srcDoc, pageIdx);\n      copied.forEach(p => cleanDoc.addPage(p));\n      const cleanBytes = await cleanDoc.save({ useObjectStreams: false });\n      buffer = Buffer.from(cleanBytes);\n      decrypted = true;\n    } catch (err) {\n      // Best-effort: se nao conseguirmos remover a protecao, seguimos com o buffer\n      // original. A Azure (Responses API com input_file) costuma aceitar muitos PDFs\n      // que o pdf-lib nao consegue reabrir. Apenas registramos o motivo.\n      console.warn('[Prepare PDF Base64] pdf-lib falhou ao desencriptar \"' + fileTitle + '\" (file_id=' + fileId + '): ' + (err && err.message ? err.message : String(err)));\n    }\n  }\n\n  const base64 = buffer.toString('base64');\n\n  // Azure OpenAI Responses API (suporta PDF nativamente via input_file).\n  // Chat Completions NAO aceita PDF como anexo - era por isso que o OCR voltava vazio.\n  // IMPORTANTE: na Azure a Responses API NAO usa /deployments/{name}/ no path;\n  // o deployment vai como \"model\" no body.\n  const ocrBody = {\n    model: 'gpt-5.4-mini',\n    input: [\n      {\n        role: 'system',\n        content: [\n          { type: 'input_text', text: 'Voce e um OCR. Extraia TODO o texto visivel do documento PDF anexado, preservando ordem de leitura, listas, tabelas e quebras de paragrafo. Nao resuma, nao comente, nao adicione cabecalhos. Retorne apenas o texto bruto extraido. Se uma pagina estiver totalmente em branco ou ilegivel, escreva [PAGINA EM BRANCO].' }\n        ]\n      },\n      {\n        role: 'user',\n        content: [\n          { type: 'input_text', text: 'Transcreva o conteudo deste PDF.' },\n          {\n            type: 'input_file',\n            filename: fileTitle + '.pdf',\n            file_data: 'data:application/pdf;base64,' + base64,\n          },\n        ],\n      },\n    ],\n    max_output_tokens: 16000,\n  };\n\n  item.json = {\n    ...item.json,\n    pdf_size_bytes: buffer.length,\n    pdf_base64_length: base64.length,\n    pdf_was_encrypted: isEncrypted,\n    pdf_decrypted_inline: decrypted,\n    ocr_body: ocrBody,\n  };\n  out.push(item);\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [43872, 19664],
+      "id": "ff80c78d-abf7-4459-97b0-322b95494ce2",
+      "name": "Prepare PDF Base64"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dt-modelos-ia-resource.cognitiveservices.azure.com/openai/responses?api-version=2025-04-01-preview",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "azureOpenAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Prepare PDF Base64').item.json.ocr_body) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "4d66767c-f41c-4838-9c1f-4a68ec0fae0d",
+      "name": "OCR via Azure (gpt-5.4-mini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [44432, 20048],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "azureOpenAiApi": {
+          "id": "xby4FSbCaCnssJxl",
+          "name": "Azure Open AI account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d6dac2c3-4e4f-4012-b132-3a3c3a3c3c03",
+              "name": "text",
+              "value": "={{ $json.output_text || ($json.output || []).flatMap(o => (o.content || []).map(c => c.text || '')).join('\\n') || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "d6dac2c3-4e4f-4012-b132-3a3c3a3c3c04",
+              "name": "ocr_used",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0b561b78-73d2-4d7c-8a00-bf7f576ca62e",
+      "name": "Set OCR Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [44608, 20048]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "efeccfa9-b2c7-4c42-9fdb-1b2bd253f4e7",
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [44080, 19840]
+    },
+    {
+      "parameters": {},
+      "id": "4fca8fea-df62-4f8a-8f74-0a164cb24a10",
+      "name": "Character Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [45072, 20336]
+    },
+    {
+      "parameters": {
+        "fieldsToSummarize": {
+          "values": [
+            {
+              "aggregation": "concatenate",
+              "field": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d7d6df55-48b9-4aaf-8b29-67b8c9639f16",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.summarize",
+      "typeVersion": 1,
+      "position": [44432, 19840]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Set File ID - to Context').item.json.file_type }}",
+                    "rightValue": "application/pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "2ae7faa7-a936-4621-a680-60c512163034",
+                    "leftValue": "={{ $('Set File ID - to Context').item.json.file_type }}",
+                    "rightValue": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "fc193b06-363b-4699-a97d-e5a850138b0e",
+                    "leftValue": "={{ $('Set File ID - to Context').item.json.file_type }}",
+                    "rightValue": "=application/vnd.google-apps.spreadsheet",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "b69f5605-0179-4b02-9a32-e34bb085f82d",
+                    "leftValue": "={{ $('Set File ID - to Context').item.json.file_type }}",
+                    "rightValue": "application/vnd.google-apps.document",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 3
+        }
+      },
+      "id": "8e90579f-6719-4649-a873-acd9666bf6ab",
+      "name": "Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [43552, 19888]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "value": "rubbercity_documents",
+          "mode": "list",
+          "cachedResultName": "rubbercity_documents"
+        },
+        "options": {
+          "queryName": "rubbercity_match_documents"
+        }
+      },
+      "id": "2ab3ff16-de33-40e8-9c9d-5a6d01f52020",
+      "name": "Insert into Supabase Vectorstore",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1,
+      "position": [45088, 19984],
+      "credentials": {
+        "supabaseApi": {
+          "id": "i5Q8tj8Pyc9XjSGd",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "31135917-3444-4868-8cbd-aba9ca6b560e",
+      "name": "Extract from Excel",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [43872, 19840]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f422e2e0-381c-46ea-8f38-3f58c501d8b9",
+              "name": "schema",
+              "value": "={{ $('Extract from Excel').isExecuted ? $('Extract from Excel').first().json.keys().toJsonString() : $('Extract from CSV').first().json.keys().toJsonString() }}",
+              "type": "string"
+            },
+            {
+              "id": "bb07c71e-5b60-4795-864c-cc3845b6bc46",
+              "name": "data",
+              "value": "={{ $json.concatenated_data }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [44848, 19712],
+      "id": "eddd0814-5fa5-418c-9a40-58fc4c356bdc",
+      "name": "Set Schema"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [43872, 20016],
+      "id": "39de785f-4979-428a-9056-ae6a9e83ec9d",
+      "name": "Extract from CSV"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [42000, 19872],
+      "id": "b0985db3-5ed2-420b-831d-633e94eb0404",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "tableId": "rubbercity_document_rows",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "dataset_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Set File ID - to Context').item.json.file_id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [43008, 20016],
+      "id": "de7c0f1e-5a86-40fe-8ce8-e16a45fc187c",
+      "name": "Delete Old Data Rows",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "i5Q8tj8Pyc9XjSGd",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "rubbercity_document_rows",
+          "mode": "list",
+          "cachedResultName": "rubbercity_document_rows"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "dataset_id": "={{ $('Set File ID - to Context').item.json.file_id }}",
+            "row_data": "={{ $json.toJsonString().replaceAll(/'/g, \"''\") }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "dataset_id",
+              "displayName": "dataset_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_data",
+              "displayName": "row_data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [44080, 20016],
+      "id": "c2068f15-dae2-4c98-b8d6-995931fde186",
+      "name": "Insert Table Rows",
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "rubbercity_document_metadata",
+          "mode": "list",
+          "cachedResultName": "rubbercity_document_metadata"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "file_id": "={{ $('Set File ID - to Context').item.json.file_id }}",
+            "schema": "={{ $json.schema }}",
+            "category_id": "={{ $('Set File ID - to Context').item.json.category_id }}"
+          },
+          "matchingColumns": ["file_id"],
+          "schema": [
+            {
+              "id": "file_id",
+              "displayName": "file_id",
+              "required": true,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "schema",
+              "displayName": "schema",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "category_id",
+              "displayName": "category_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [45072, 19712],
+      "id": "f00577be-3ae3-4a80-a9d5-9a27ef451e36",
+      "name": "Update Schema for Document Metadata",
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 🚀 Ultimate n8n Agentic RAG Template\n\n**Author:** [Cole Medin](https://www.youtube.com/@ColeMedin)\n\n## What is this?\nThis template provides a complete implementation of an **Agentic RAG (Retrieval Augmented Generation)** system in n8n that can be extended easily for your specific use case and knowledge base. Unlike standard RAG which only performs simple lookups, this agent can reason about your knowledge base, self-improve retrieval, and dynamically switch between different tools based on the specific question.\n\n## Why Agentic RAG?\nStandard RAG has significant limitations:\n- Poor analysis of numerical/tabular data\n- Missing context due to document chunking\n- Inability to connect information across documents\n- No dynamic tool selection based on question type\n\n## What makes this template powerful:\n- **Intelligent tool selection**: Switches between RAG lookups, SQL queries, or full document retrieval based on the question\n- **Complete document context**: Accesses entire documents when needed instead of just chunks\n- **Accurate numerical analysis**: Uses SQL for precise calculations on spreadsheet/tabular data\n- **Cross-document insights**: Connects information across your entire knowledge base\n- **Multi-file processing**: Handles multiple documents in a single workflow loop\n- **Efficient storage**: Uses JSONB in Supabase to store tabular data without creating new tables for each CSV\n\n## Getting Started\n1. Run the table creation nodes first to set up your database tables in Supabase\n2. Upload your documents through Google Drive (or swap out for a different file storage solution)\n3. The agent will process them automatically (chunking text, storing tabular data in Supabase)\n4. Start asking questions that leverage the agent's multiple reasoning approaches\n\n## Customization\nThis template provides a solid foundation that you can extend by:\n- Tuning the system prompt for your specific use case\n- Adding document metadata like summaries\n- Implementing more advanced RAG techniques\n- Optimizing for larger knowledge bases\n\n---\n\nI do intend on making a local version of this agent very soon!",
+        "height": 1400,
+        "width": 540,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [38304, 19552],
+      "typeVersion": 1,
+      "id": "62d926d0-09f1-4e63-b6d4-4bd03c9226a5",
+      "name": "Sticky Note9"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "limit": 200,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.drive_folder_id }}",
+            "mode": "id"
+          }
+        },
+        "options": {
+          "fields": ["*"]
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [41536, 19664],
+      "id": "1c17216b-983e-49e6-9f3d-e477dab6acdc",
+      "name": "Search files and folders",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "1yxLK6IGIPQiU21B",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM rubbercity_documents \nWHERE metadata->>'file_id' = '{{ $json.file_id }}'\nAND (metadata->>'session_id' IS NULL OR metadata->>'session_id' = '');",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [42816, 19760],
+      "id": "3b013afe-93bf-4dac-a64c-81caaeea3d54",
+      "name": "Delete Old Doc Rows1",
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "inputDataFieldName": "data0",
+        "name": "={{ $now.format('dd-LL-yyyy') }}_{{ $binary.data0.fileName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.body.drive_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [41536, 20080],
+      "id": "3a1af135-ba29-42bd-a588-bc82850a07ca",
+      "name": "Upload file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "1yxLK6IGIPQiU21B",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-index-drive",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [41232, 20176],
+      "id": "8645a734-cde0-4629-9138-8cf4c93be4eb",
+      "name": "InsertFile-drive",
+      "webhookId": "f9870744-c0e5-422a-9346-036341f2765a"
+    },
+    {
+      "parameters": {
+        "content": "## 1. Setup Inicial (Execute 1x via Webhook)\nCria TODAS as tabelas:\n- document_metadata (Arquivos)\n- document_rows (Linhas Excel/CSV)\n- chat_message (Histórico de Chat)\n- documents (Vetores RAG)",
+        "height": 653,
+        "width": 863,
+        "color": 3
+      },
+      "id": "df075d8a-ce54-4ff8-8b71-b9171fd3005a",
+      "name": "Sticky Note Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40160, 19568]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Safety net p/ DB novo. Em DBs gerenciados pelas migrations 004/006, as tabelas\n-- já existem e pertencem a outro role; toleramos insufficient_privilege.\nDO $mig$\nBEGIN\n  BEGIN EXECUTE 'CREATE EXTENSION IF NOT EXISTS vector';   EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n  BEGIN EXECUTE 'CREATE EXTENSION IF NOT EXISTS pgcrypto'; EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\n  BEGIN\n    EXECUTE $ddl$\n      CREATE TABLE IF NOT EXISTS rubbercity_document_metadata (\n        file_id      TEXT PRIMARY KEY,\n        title        TEXT,\n        code         TEXT,\n        url          TEXT,\n        source       TEXT,\n        mime_type    TEXT,\n        schema       JSONB,\n        category_id  UUID,\n        session_id   TEXT,\n        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()\n      )\n    $ddl$;\n  EXCEPTION WHEN insufficient_privilege OR duplicate_table THEN NULL; END;\n\n  BEGIN EXECUTE 'CREATE INDEX IF NOT EXISTS idx_rubbercity_meta_category ON rubbercity_document_metadata(category_id)'; EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n  BEGIN EXECUTE 'CREATE INDEX IF NOT EXISTS idx_rubbercity_meta_code     ON rubbercity_document_metadata(code)';        EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n  BEGIN EXECUTE 'CREATE INDEX IF NOT EXISTS rubbercity_idx_doc_metadata_session ON rubbercity_document_metadata(session_id)'; EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\n  BEGIN\n    EXECUTE $ddl$\n      CREATE TABLE IF NOT EXISTS rubbercity_document_rows (\n        id          BIGSERIAL PRIMARY KEY,\n        dataset_id  TEXT NOT NULL REFERENCES rubbercity_document_metadata(file_id) ON DELETE CASCADE,\n        row_data    JSONB NOT NULL,\n        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()\n      )\n    $ddl$;\n  EXCEPTION WHEN insufficient_privilege OR duplicate_table THEN NULL; END;\n  BEGIN EXECUTE 'CREATE INDEX IF NOT EXISTS idx_rubbercity_rows_dataset ON rubbercity_document_rows(dataset_id)'; EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\n  BEGIN\n    EXECUTE $ddl$\n      CREATE TABLE IF NOT EXISTS rubbercity_chat_message (\n        id SERIAL PRIMARY KEY,\n        session_id TEXT NOT NULL,\n        message JSONB NOT NULL,\n        created_at TIMESTAMP DEFAULT NOW()\n      )\n    $ddl$;\n  EXCEPTION WHEN insufficient_privilege OR duplicate_table THEN NULL; END;\n  BEGIN EXECUTE 'CREATE INDEX IF NOT EXISTS rubbercity_idx_chat_message_session_id ON rubbercity_chat_message(session_id)'; EXCEPTION WHEN insufficient_privilege THEN NULL; END;\nEND\n$mig$;",
+        "options": {}
+      },
+      "id": "b9628cac-d800-4219-81f6-0ec1fd7eb5c3",
+      "name": "Create Standard Tables",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [40560, 19792],
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Safety net. Em DB gerenciado pelas migrations 004/005, a tabela/função\n-- já existem com outro owner; toleramos insufficient_privilege.\nDO $mig$\nBEGIN\n  BEGIN EXECUTE 'CREATE EXTENSION IF NOT EXISTS vector'; EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\n  BEGIN\n    EXECUTE $ddl$\n      CREATE TABLE IF NOT EXISTS rubbercity_documents (\n        id bigserial PRIMARY KEY,\n        content text,\n        metadata jsonb,\n        embedding vector(1536)\n      )\n    $ddl$;\n  EXCEPTION WHEN insufficient_privilege OR duplicate_table THEN NULL; END;\n\n  BEGIN EXECUTE $ddl$CREATE INDEX IF NOT EXISTS idx_rubbercity_docs_file_id ON rubbercity_documents ((metadata->>'file_id'))$ddl$; EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\n  -- Só (re)cria a função se ela ainda não existir. Não dropamos — migration 005 é a fonte da verdade.\n  IF NOT EXISTS (\n    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace\n    WHERE n.nspname = 'public' AND p.proname = 'rubbercity_match_documents'\n  ) THEN\n    BEGIN\n      EXECUTE $ddl$\n        CREATE FUNCTION rubbercity_match_documents (\n          query_embedding vector(1536),\n          match_count int DEFAULT NULL,\n          filter jsonb DEFAULT '{}'\n        ) RETURNS TABLE (\n          id bigint,\n          content text,\n          metadata jsonb,\n          similarity float\n        )\n        LANGUAGE plpgsql\n        AS $fn$\n        #variable_conflict use_column\n        BEGIN\n          RETURN QUERY\n          SELECT\n            id,\n            content,\n            metadata,\n            1 - (rubbercity_documents.embedding <=> query_embedding) AS similarity\n          FROM rubbercity_documents\n          WHERE metadata @> filter\n          ORDER BY rubbercity_documents.embedding <=> query_embedding\n          LIMIT match_count;\n        END;\n        $fn$\n      $ddl$;\n    EXCEPTION WHEN insufficient_privilege OR duplicate_function THEN NULL; END;\n  END IF;\nEND\n$mig$;",
+        "options": {}
+      },
+      "id": "2925b0e5-6288-4efc-9198-8467a9863fef",
+      "name": "Create Vector Table & Functions1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [40752, 19792],
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Reset: drop indices auxiliares (toleramos insufficient_privilege) e limpa toda a base RAG.\nDO $mig$\nBEGIN\n  BEGIN EXECUTE 'CREATE INDEX IF NOT EXISTS rubbercity_idx_documents_metadata_gin ON rubbercity_documents USING GIN (metadata)'; EXCEPTION WHEN insufficient_privilege THEN NULL; END;\nEND\n$mig$;\n\n-- Apaga vetores (não há FK para cascade)\nDELETE FROM rubbercity_documents;\n\n-- Apaga metadados (cascade -> rubbercity_document_rows)\nDELETE FROM rubbercity_document_metadata;",
+        "options": {}
+      },
+      "id": "077ea4d2-8859-4090-8e2f-fc86cc3711b8",
+      "name": "Delete DRIVE Data Only1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [41072, 19664],
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [40336, 19984],
+      "id": "b13ad900-1b61-4b68-8b1d-1dc89ca6fde4",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "10646eae-ae46-4327-a4dc-9987c2d76173",
+              "name": "file_id",
+              "value": "={{ $input.item.json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "f4536df5-d0b1-4392-bf17-b8137fb31a44",
+              "name": "file_type",
+              "value": "={{ $input.item.json.mimeType }}",
+              "type": "string"
+            },
+            {
+              "id": "77d782de-169d-4a46-8a8e-a3831c04d90f",
+              "name": "file_title",
+              "value": "={{ $input.item.json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "9bde4d7f-e4f3-4ebd-9338-dce1350f9eab",
+              "name": "file_url",
+              "value": "={{ $input.item.json.webViewLink }}",
+              "type": "string"
+            },
+            {
+              "id": "d79e06cc-823f-47e6-bfa6-dd2f0cb4264d",
+              "name": "session_id",
+              "value": "={{ $input.item.json.session_id || null }}",
+              "type": "string"
+            },
+            {
+              "id": "fde1b561-9f12-4a98-9381-0d69c54c7ffe",
+              "name": "category_id",
+              "value": "={{ $input.item.json.category_id || null }}",
+              "type": "string"
+            },
+            {
+              "id": "05982927-6758-492c-9c54-84b955784305",
+              "name": "category_code",
+              "value": "={{ $input.item.json.category_code || null }}",
+              "type": "string"
+            },
+            {
+              "id": "8bacc4ac-985f-48ee-8dda-03ee17710cdf",
+              "name": "code",
+              "value": "={{ $input.item.json.code || (($input.item.json.name || '').replace(/\\.[^.]+$/, '')) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f105bae0-680b-42fa-a194-abf37701350a",
+      "name": "Set File ID - to Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [42256, 19888]
+    },
+    {
+      "parameters": {
+        "content": "## 3. Limpeza Lenta (Conversas)\nRoda a cada 24h.\nApaga TUDO de sessões antigas (Chat + Docs + Vetores).",
+        "height": 820,
+        "width": 1276,
+        "color": 2
+      },
+      "id": "61b9dc7b-d314-47ca-a1b9-b26b2f02912e",
+      "name": "Sticky Note Session",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [38864, 19568]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "6aa5938a-73fc-4e77-9a61-899acf282b24",
+      "name": "24h Trigger (Session)1",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [38928, 20080]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- session_id não existe no schema Rubbercity; nenhum arquivo de sessão para expirar.\nSELECT NULL::text AS id WHERE FALSE",
+        "options": {}
+      },
+      "id": "e609b76e-9871-412e-8560-b27bbba5a8f9",
+      "name": "Get Expired File IDs1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [39200, 19952],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "d7913955-51a3-45cd-8e8c-1f5aedbee58d",
+      "name": "Loop Expired Files1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [39616, 19968]
+    },
+    {
+      "parameters": {
+        "operation": "deleteFile",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "c62b10b8-8fd2-41ec-bf99-f7d7c7a8e818",
+      "name": "Delete from Google Drive1",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [39904, 20080],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "1yxLK6IGIPQiU21B",
+          "name": "Google Drive account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Limpeza periodica: apenas histórico de chat. Uploads são permanentes\n-- (schema Rubbercity não tem session_id em rubbercity_document_metadata).\nDELETE FROM rubbercity_chat_message;\n\n-- Vetores de chunks com tag de session (caso existam em metadata jsonb)\nDELETE FROM rubbercity_documents WHERE metadata ? 'session_id';",
+        "options": {}
+      },
+      "id": "3c7acfbf-0aa1-429e-846f-54844c413b90",
+      "name": "Clean Database Records1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [39904, 19872],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-DatabaseSetup",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "7719a4da-8ba2-40a8-9f04-76343da472a1",
+      "name": "Webhook Setup",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [38928, 19808],
+      "webhookId": "1c70aff4-7d8b-4d00-abd9-0ecda88405ee"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"success\", \"message\": \"Documento processado com sucesso! Memoria RAG atualizada.\", \"file_id\": \"{{ $('Set File ID - to Context').first().json.file_id }}\" }",
+        "options": {}
+      },
+      "id": "9c93586f-0bc3-49b4-a4fa-56f5967db669",
+      "name": "Confirmar Upload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [42336, 19632]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.all();\n\nfor (const item of data) {\n  // O comando \"Reflect\" força a deleção sem o editor reclamar de Tipos\n  Reflect.deleteProperty(item, 'binary');\n}\n\nreturn data;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [45360, 19984],
+      "id": "a52a58c2-cd56-4a0a-a7e5-92a60bc6f281",
+      "name": "Limpar RAM"
+    },
+    {
+      "parameters": {
+        "content": "curl -X POST \"https://longflatworm-n8n.cloudfy.live/webhook-test/index-drive\" \\\n     -H \"Content-Type: multipart/form-data\" \\\n     -F \"data=@\\\"PROPOSTA PSI.PDF\\\"\" \\\n     -F \"tipo=proposta\"",
+        "height": 224,
+        "width": 304
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [40288, 20352],
+      "typeVersion": 1,
+      "id": "8c5c7dee-be63-41cf-ac24-db956130410f",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "curl -X POST \"https://longflatworm-n8n.cloudfy.live/webhook-test/index-drive\" -F \"data=@\\\"C:\\Users\\admin\\Downloads\\PROPOSTA PSI.PDF\\\"\" -F \"sessionId=sessao-do-giovani-123\" -F \"tipo=proposta\"",
+        "height": 208,
+        "width": 320
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [40624, 20368],
+      "typeVersion": 1,
+      "id": "537fc4aa-b09c-4079-b46b-efe8413a028f",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "bd3e7b3c-f167-4b8c-91c5-e599af4bbd84",
+              "leftValue": "={{ $json.session_id }}",
+              "rightValue": "null",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [42656, 19984],
+      "id": "b2cf57c1-b950-4f99-a07b-23504055475a",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- schema Rubbercity não tem session_id; sempre retorna NULL para que o If vá pelo branch \"sem sessão\".\nSELECT NULL::text AS session_id WHERE FALSE\nUNION ALL\nSELECT NULL::text AS session_id;",
+        "options": {}
+      },
+      "id": "e1e2e9b4-31f7-4565-b0ad-1c27c6cc833d",
+      "name": "Check Session Integrity",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [42448, 19888],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Acessa os dados de entrada\nconst firstItem = (typeof items !== 'undefined' && items.length > 0) ? items[0] : $input.first();\n\n// 2. Extrai e faz o PARSE do texto JSON\nlet inputData = [];\n\nif (firstItem.json.concatenated_data) {\n    try {\n        // Transformamos o texto \"[{...}]\" em um Array real via JSON.parse\n        inputData = JSON.parse(firstItem.json.concatenated_data);\n    } catch (e) {\n        // Se falhar o parse, tenta usar o json direto caso já seja objeto\n        inputData = firstItem.json.data || [];\n    }\n} else if (Array.isArray(firstItem.json)) {\n    inputData = firstItem.json;\n} else if (firstItem.json.data) {\n    inputData = firstItem.json.data;\n}\n\n// Se o inputData não for uma lista (array), forçamos ser uma lista vazia para não quebrar o loop\nif (!Array.isArray(inputData)) {\n    inputData = []; \n}\n\n// --- INÍCIO DO PROCESSAMENTO ---\n\nconst cleanData = [];\n\nfor (const row of inputData) {\n  // Garante que row é um objeto válido\n  if (typeof row !== 'object' || row === null) continue;\n\n  const cleanItem = {};\n  let textForRag = \"\"; \n\n  // Como os dados já têm as chaves corretas (ex: \"Empresa\", \"CNPJ\"), \n  // iteramos direto sobre elas\n  for (const key in row) {\n    const value = row[key];\n\n    // Verifica se o valor não é nulo, indefinido ou vazio\n    if (value !== undefined && value !== null && value !== '') {\n      cleanItem[key] = value;\n      // Monta o texto para o RAG dinamicamente\n      textForRag += `${key}: ${value}. `;\n    }\n  }\n\n  // Se o objeto não estiver vazio, adiciona a propriedade de texto e insere no array final\n  if (Object.keys(cleanItem).length > 0) {\n    cleanItem.text_for_rag = textForRag.trim();\n    cleanData.push({ json: cleanItem });\n  }\n}\n\nreturn cleanData;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [44832, 19920],
+      "id": "6a35a257-7723-44dc-9970-d8edea22bc0d",
+      "name": "Limpeza Excel"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Limpeza de Docs - lida com saídas dos nós Extract PDF Text (campo \"text\")\n// e Extract Document Text (campo \"data\"). Detecta PDFs sem camada de texto\n// (ex.: digitalizações geradas por PDFCreator) e sinaliza claramente.\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  // 1. Descobre onde está o conteúdo bruto\n  const sourceField = item.json.text != null ? 'text'\n                    : item.json.data != null ? 'data'\n                    : null;\n\n  if (!sourceField) {\n    // Nada para limpar — repassa como veio\n    out.push(item);\n    continue;\n  }\n\n  const raw = String(item.json[sourceField] ?? '');\n\n  // 2. Remove TUDO que não é letra, número, pontuação, espaço ou quebra de linha\n  //    (mata binários que vazam de PDFs problemáticos)\n  let cleanText = raw.replace(/[^\\p{L}\\p{N}\\p{P}\\p{Z}\\n]/gu, '');\n\n  // 3. Remove sequências de escape Unicode incompletas\n  cleanText = cleanText.replace(/\\\\u/g, '');\n\n  // 4. Normaliza espaços/quebras de linha excessivas para medir conteúdo real\n  const meaningful = cleanText.replace(/\\s+/g, '').trim();\n\n  // 5. Detecta PDF sem texto extraível (apenas \\n\\n\\n... do pdf-parse).\n  //    Esses arquivos quase sempre são digitalizações/imagens dentro do PDF\n  //    e precisam de OCR para serem indexados.\n  if (meaningful.length < 20) {\n    const fileTitle = $('Set File ID - to Context')?.first()?.json?.file_title ?? '(desconhecido)';\n    const fileId    = $('Set File ID - to Context')?.first()?.json?.file_id    ?? '(sem id)';\n    const ocrUsed   = item.json.ocr_used === true;\n    throw new Error(\n      `PDF sem texto utilizavel: \"${fileTitle}\" (file_id=${fileId}). ` +\n      (ocrUsed\n        ? `OCR via Azure OpenAI tambem nao retornou texto. Verifique se o deployment tem suporte a visao/PDF e se o arquivo nao esta protegido/corrompido.`\n        : `O arquivo provavelmente e uma digitalizacao/imagem sem camada de texto e o branch OCR nao foi acionado.`)\n    );\n  }\n\n  // 6. Limite de segurança (50k chars) e grava no MESMO campo de origem,\n  //    além de em \"data\" para compatibilidade com o Default Data Loader.\n  const finalText = cleanText.substring(0, 50000);\n  item.json[sourceField] = finalText;\n  item.json.data = finalText;\n\n  out.push(item);\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [44832, 20064],
+      "id": "964fd67c-8e16-4665-a7dc-186cc4bd0a47",
+      "name": "Limpeza de Docs"
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [45504, 19984],
+      "id": "fd845ed1-8e41-4ad1-980b-dc2a0a34ebd9",
+      "name": "Wait",
+      "webhookId": "79b70584-7a14-4c4d-9ce3-6ff01b47128f"
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [40256, 19792],
+      "id": "2bfeacee-1daf-48f8-9bd6-aba8cdb1bafb",
+      "name": "Wait1",
+      "webhookId": "f18070ac-659f-41e0-9fac-920d996cefad"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "af3fd04e-89dd-4dd9-8726-1ace57d0f4cf",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [39392, 19792],
+      "id": "18a18076-fdba-4ab4-aa67-92cbd23c6a63",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "rubbercity_document_metadata",
+          "mode": "list",
+          "cachedResultName": "rubbercity_document_metadata"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "file_id": "={{ $('Set File ID - to Context').item.json.file_id }}",
+            "title": "={{ $('Set File ID - to Context').item.json.file_title }}",
+            "url": "={{ $('Set File ID - to Context').item.json.file_url }}",
+            "category_id": "={{ $('Set File ID - to Context').item.json.category_id }}",
+            "code": "={{ $('Set File ID - to Context').item.json.code }}"
+          },
+          "matchingColumns": ["file_id"],
+          "schema": [
+            {
+              "id": "file_id",
+              "displayName": "file_id",
+              "required": true,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "schema",
+              "displayName": "schema",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": true
+            },
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": true
+            },
+            {
+              "id": "category_id",
+              "displayName": "category_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "code",
+              "displayName": "code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [43184, 19776],
+      "id": "77990144-1dd6-43b8-aa35-67e4685e7c99",
+      "name": "Insert Document Metadata1",
+      "executeOnce": false,
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsAzureOpenAi",
+      "typeVersion": 1,
+      "position": [44944, 20224],
+      "id": "abf89d75-a34b-4930-becc-fd5003046819",
+      "name": "Embeddings Azure OpenAI",
+      "credentials": {
+        "azureOpenAiApi": {
+          "id": "xby4FSbCaCnssJxl",
+          "name": "Azure Open AI account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, code, name, drive_folder_id\nFROM rubbercity_document_categories\nWHERE drive_folder_id IS NOT NULL\n  AND drive_folder_id <> ''\nORDER BY code;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [41248, 19664],
+      "id": "b5a031e0-fa24-460b-8cff-282cf0a3e587",
+      "name": "Get Categories with Folders",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Anexa category_id/category_code do contexto da categoria pai\n// (Get Categories with Folders) a cada arquivo retornado pelo listing do Drive.\n// Usado no fluxo de RESET (reprocessamento de todas as pastas).\nconst cat = $('Get Categories with Folders').item.json || {};\nreturn $input.all().map(i => ({\n  json: {\n    ...i.json,\n    category_id: cat.id || null,\n    category_code: cat.code || null,\n    session_id: null\n  }\n}));"
+      },
+      "id": "6b8ced45-13c1-43d1-a766-2649f9a68df2",
+      "name": "Attach Cat to Drive Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [41712, 19664]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Anexa metadata do body do webhook (InsertFile-drive) ao arquivo recém-uploaded.\n// Usado no fluxo de UPLOAD via CHAT (com session_id).\nconst body = ($('InsertFile-drive').first().json.body) || {};\nreturn $input.all().map(i => ({\n  json: {\n    ...i.json,\n    category_id: body.category_id || null,\n    category_code: body.category_code || null,\n    session_id: body.sessionId || body.session_id || null\n  }\n}));"
+      },
+      "id": "4e360336-11c5-404a-81c0-391af965a48a",
+      "name": "Attach Body to Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [41680, 20080]
+    },
+    {
+      "parameters": {
+        "content": "## 4. Upload Unitário (Front Admin + ERP)\n\n`POST /webhook/rubbercity-rag-upload`\nmultipart: `data` (arquivo) + `categoria` (code, ex: \"IT\").\n\nFluxo:\n- Resolve drive_folder_id pela categoria.\n- Procura no Drive arquivo com nome exato; se existir → Update (mesmo fileId), senão → Upload (sem prefixo de data).\n- Cai no Loop Over Items para reaproveitar o pipeline RAG.",
+        "height": 380,
+        "width": 760,
+        "color": 4
+      },
+      "id": "14516968-28c1-456d-a636-4f65b374bf3c",
+      "name": "Sticky Note - Upload Unitario",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [38304, 21072]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-rag-upload",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*",
+          "binaryPropertyName": "data"
+        }
+      },
+      "id": "fc1d2e50-f5d1-4b6c-bc26-219b87d3ef43",
+      "name": "Webhook RAG Upload",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [38448, 21232],
+      "webhookId": "zfx-rag-upload"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai 'categoria' (code) do body multipart e filename do binário.\nconst item = $input.first();\nconst body = item.json.body || item.json || {};\nconst categoria = String(body.categoria || body.category_code || '').trim();\nif (!categoria) throw new Error('Campo \"categoria\" (category_code) é obrigatório.');\n\nconst bin = item.binary && (item.binary.data || item.binary[Object.keys(item.binary)[0]]);\nif (!bin) throw new Error('Arquivo \"data\" não enviado no multipart.');\n\nconst filename = bin.fileName || body.filename || '';\nif (!filename) throw new Error('Não foi possível determinar o nome do arquivo.');\n\nitem.json = {\n  ...item.json,\n  categoria,\n  filename,\n  mime_type: bin.mimeType || 'application/octet-stream'\n};\nreturn item;"
+      },
+      "id": "01f7130b-facf-42f4-a976-3373a3dbe5ee",
+      "name": "Parse Upload Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [38656, 21232]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id::text AS category_id, code AS category_code, name AS category_name, drive_folder_id\nFROM rubbercity_document_categories\nWHERE code = '{{ String($json.categoria || '').replace(/'/g, \"''\") }}'\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "8c1e1ddd-a0c8-474d-a953-f36960641785",
+      "name": "Lookup Upload Category",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [38864, 21232],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhook = $('Parse Upload Payload').first().json;\nconst cat = $input.first().json;\nif (!cat || !cat.category_id) throw new Error('Categoria não encontrada: ' + webhook.categoria);\nif (!cat.drive_folder_id || String(cat.drive_folder_id).trim() === '') {\n  throw new Error('Categoria ' + webhook.categoria + ' não possui drive_folder_id configurado.');\n}\nreturn [{\n  json: {\n    categoria: webhook.categoria,\n    filename: webhook.filename,\n    mime_type: webhook.mime_type,\n    category_id: cat.category_id,\n    category_code: cat.category_code,\n    category_name: cat.category_name,\n    drive_folder_id: cat.drive_folder_id\n  },\n  binary: $('Webhook RAG Upload').first().binary\n}];"
+      },
+      "id": "0605fa0e-90bd-4a74-9377-16253e9c35c2",
+      "name": "Build Upload Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [39072, 21232]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $json.filename }}",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.drive_folder_id }}",
+            "mode": "id"
+          },
+          "whatToSearch": "files"
+        },
+        "options": {
+          "fields": ["id", "name", "mimeType", "webViewLink", "trashed"]
+        }
+      },
+      "id": "3f4d5d1b-5eb8-43f8-be96-6bfdf9b62d28",
+      "name": "Search Drive by Filename",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [39280, 21232],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "1yxLK6IGIPQiU21B",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Build Upload Context').first().json;\nconst hits = $input.all().map(i => i.json).filter(f => f && f.id && f.name && !f.trashed);\nconst exact = hits.find(f => f.name === ctx.filename);\nconst binary = $('Build Upload Context').first().binary;\nreturn [{\n  json: {\n    ...ctx,\n    existing_file_id: exact ? exact.id : null,\n    existing_web_view_link: exact ? (exact.webViewLink || null) : null,\n    action: exact ? 'replace' : 'create'\n  },\n  binary\n}];"
+      },
+      "id": "13530ffc-b81a-485b-ba1f-0104491e9035",
+      "name": "Decide Replace or Create",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [39488, 21232]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-upload-replace",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "replace",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ad594b27-e22e-4f17-bb73-8cd2974095d6",
+      "name": "Replace?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [39696, 21232]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.existing_file_id }}",
+          "mode": "id"
+        },
+        "changeFileContent": true,
+        "options": {}
+      },
+      "id": "1ebfad13-2ec7-4e67-8490-713d7f58ee76",
+      "name": "Drive: Update File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [39904, 21136],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "1yxLK6IGIPQiU21B",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "={{ $json.filename }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.drive_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "09c649fc-3a47-4a8a-9eee-29918a47ffe6",
+      "name": "Drive: Upload File (no prefix)",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [39904, 21328],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "1yxLK6IGIPQiU21B",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza o resultado do Drive (update OU upload) para o shape esperado\n// pelo Loop Over Items / Set File ID - to Context.\nconst drive = $input.first().json || {};\nconst ctx = $('Decide Replace or Create').first().json;\nconst fileId = drive.id || ctx.existing_file_id;\nif (!fileId) throw new Error('Drive não retornou file_id após upload/update.');\nconst dot = ctx.filename.lastIndexOf('.');\nconst code = dot > 0 ? ctx.filename.substring(0, dot) : ctx.filename;\nreturn [{\n  json: {\n    id: fileId,\n    name: ctx.filename,\n    mimeType: drive.mimeType || ctx.mime_type,\n    webViewLink: drive.webViewLink || ctx.existing_web_view_link || null,\n    category_id: ctx.category_id,\n    category_code: ctx.category_code,\n    code,\n    session_id: null\n  }\n}];"
+      },
+      "id": "cb2b595f-829e-4d18-beef-256a198fe146",
+      "name": "Set Upload Item Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [40112, 21232]
+    },
+    {
+      "parameters": {
+        "content": "## 5. Reprocessar (Reindex) por file_id\n\n`POST /webhook/rubbercity-rag-reindex`\nJSON: `{ \"file_id\": \"<id>\" }` ou `{ \"file_ids\": [\"<id1>\", ...] }`.\n\nNão re-upload no Drive — só re-extrai do mesmo file_id e reinsere chunks no vetor.",
+        "height": 320,
+        "width": 760,
+        "color": 6
+      },
+      "id": "df6b5040-920b-4a91-98b9-122f51e501ca",
+      "name": "Sticky Note - Reindex",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [38304, 21632]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-rag-reindex",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "171a620a-9b46-4f71-a57e-a24d07ae02cd",
+      "name": "Webhook RAG Reindex",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [38448, 21792],
+      "webhookId": "zfx-rag-reindex"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza body: aceita { file_id } | { file_ids: [...] } | { ids: [...] }.\nconst b = ($input.first().json.body) || $input.first().json || {};\nlet ids = [];\nif (Array.isArray(b.file_ids)) ids = b.file_ids;\nelse if (Array.isArray(b.ids)) ids = b.ids;\nelse if (b.file_id) ids = [b.file_id];\nelse if (b.id) ids = [b.id];\nids = ids.map(x => String(x || '').trim()).filter(Boolean);\nif (ids.length === 0) throw new Error('file_id ou file_ids obrigatório.');\nreturn [{ json: { ids, ids_csv: ids.map(s => s.replace(/[^a-zA-Z0-9_\\-\\.]/g, '')).join(',') } }];"
+      },
+      "id": "7fa3a451-d378-4b5d-8bb9-86706c7e893f",
+      "name": "Normalize Reindex IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [38656, 21792]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT m.file_id AS id,\n       COALESCE(m.title, m.file_id) AS name,\n       COALESCE(m.mime_type, 'application/octet-stream') AS \"mimeType\",\n       m.url AS \"webViewLink\",\n       m.category_id::text AS category_id,\n       c.code AS category_code,\n       m.code AS code\nFROM rubbercity_document_metadata m\nLEFT JOIN rubbercity_document_categories c ON c.id = m.category_id\nWHERE m.file_id = ANY(string_to_array('{{ $json.ids_csv }}', ','));",
+        "options": {}
+      },
+      "id": "d1b44d9e-cbf9-49cd-8f11-9c72cd7ce4f6",
+      "name": "Fetch Reindex Metadata",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [38864, 21792],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Garante session_id null e mantém o shape esperado pelo Loop Over Items.\nconst rows = $input.all();\nif (rows.length === 0) throw new Error('Nenhum documento encontrado para os file_ids fornecidos.');\nreturn rows.map(r => ({\n  json: {\n    id: r.json.id,\n    name: r.json.name,\n    mimeType: r.json.mimeType,\n    webViewLink: r.json.webViewLink,\n    category_id: r.json.category_id,\n    category_code: r.json.category_code,\n    code: r.json.code,\n    session_id: null\n  }\n}));"
+      },
+      "id": "a268a87f-6c10-42ff-bfcd-9b130883dc69",
+      "name": "Set Reindex Item Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [39072, 21792]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'queued', reindex_count: $('Normalize Reindex IDs').first().json.ids.length, ids: $('Normalize Reindex IDs').first().json.ids } }}",
+        "options": {}
+      },
+      "id": "2ff4f9f2-da9e-4a7c-93fb-4d913d32635e",
+      "name": "Respond Reindex Queued",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [39280, 21792]
+    }
+  ],
+  "connections": {
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Insert into Supabase Vectorstore",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Document Text": {
+      "main": [
+        [
+          {
+            "node": "Limpeza de Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "PDF tem texto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDF tem texto?": {
+      "main": [
+        [
+          {
+            "node": "Limpeza de Docs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OCR via Azure (gpt-5.4-mini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PDF Base64": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OCR via Azure (gpt-5.4-mini)": {
+      "main": [
+        [
+          {
+            "node": "Set OCR Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set OCR Text": {
+      "main": [
+        [
+          {
+            "node": "Limpeza de Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize": {
+      "main": [
+        [
+          {
+            "node": "Set Schema",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Limpeza Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Prepare PDF Base64",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract from Excel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract from CSV",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Document Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert into Supabase Vectorstore": {
+      "main": [
+        [
+          {
+            "node": "Limpar RAM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from Excel": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Insert Table Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Schema": {
+      "main": [
+        [
+          {
+            "node": "Update Schema for Document Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from CSV": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Insert Table Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Confirmar Upload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set File ID - to Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Old Data Rows": {
+      "main": [
+        [
+          {
+            "node": "Insert Document Metadata1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search files and folders": {
+      "main": [
+        [
+          {
+            "node": "Attach Cat to Drive Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Old Doc Rows1": {
+      "main": [
+        [
+          {
+            "node": "Delete Old Data Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload file": {
+      "main": [
+        [
+          {
+            "node": "Attach Body to Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsertFile-drive": {
+      "main": [
+        [
+          {
+            "node": "Upload file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Standard Tables": {
+      "main": [
+        [
+          {
+            "node": "Create Vector Table & Functions1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Vector Table & Functions1": {
+      "main": [
+        [
+          {
+            "node": "Delete DRIVE Data Only1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete DRIVE Data Only1": {
+      "main": [
+        [
+          {
+            "node": "Get Categories with Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Create Standard Tables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set File ID - to Context": {
+      "main": [
+        [
+          {
+            "node": "Check Session Integrity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "24h Trigger (Session)1": {
+      "main": [
+        [
+          {
+            "node": "Get Expired File IDs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Expired File IDs1": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Expired Files1": {
+      "main": [
+        [
+          {
+            "node": "Clean Database Records1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete from Google Drive1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete from Google Drive1": {
+      "main": [
+        [
+          {
+            "node": "Loop Expired Files1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Database Records1": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Setup": {
+      "main": [
+        [
+          {
+            "node": "Get Expired File IDs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpar RAM": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete Old Doc Rows1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Session Integrity": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpeza Excel": {
+      "main": [
+        [
+          {
+            "node": "Insert into Supabase Vectorstore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpeza de Docs": {
+      "main": [
+        [
+          {
+            "node": "Insert into Supabase Vectorstore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Create Standard Tables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Loop Expired Files1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Document Metadata1": {
+      "main": [
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Azure OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Insert into Supabase Vectorstore",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Categories with Folders": {
+      "main": [
+        [
+          {
+            "node": "Search files and folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Cat to Drive Files": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Body to Upload": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook RAG Upload": {
+      "main": [
+        [
+          {
+            "node": "Parse Upload Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Upload Payload": {
+      "main": [
+        [
+          {
+            "node": "Lookup Upload Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Upload Category": {
+      "main": [
+        [
+          {
+            "node": "Build Upload Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Upload Context": {
+      "main": [
+        [
+          {
+            "node": "Search Drive by Filename",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Drive by Filename": {
+      "main": [
+        [
+          {
+            "node": "Decide Replace or Create",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide Replace or Create": {
+      "main": [
+        [
+          {
+            "node": "Replace?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace?": {
+      "main": [
+        [
+          {
+            "node": "Drive: Update File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drive: Upload File (no prefix)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive: Update File": {
+      "main": [
+        [
+          {
+            "node": "Set Upload Item Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive: Upload File (no prefix)": {
+      "main": [
+        [
+          {
+            "node": "Set Upload Item Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Upload Item Shape": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook RAG Reindex": {
+      "main": [
+        [
+          {
+            "node": "Normalize Reindex IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Reindex IDs": {
+      "main": [
+        [
+          {
+            "node": "Fetch Reindex Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Reindex Metadata": {
+      "main": [
+        [
+          {
+            "node": "Set Reindex Item Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Reindex Item Shape": {
+      "main": [
+        [
+          {
+            "node": "Respond Reindex Queued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Reindex Queued": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "03d32a206f2d8840fce482e6c587726f18775bd9177e9401c00ca76d3086ad41"
+  }
+}

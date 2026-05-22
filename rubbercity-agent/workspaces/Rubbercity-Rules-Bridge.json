@@ -1,0 +1,219 @@
+{
+  "name": "Rubbercity-Rules-Bridge",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-rule-band-for", "responseMode": "responseNode", "options": {} },
+      "id": "wh-band-for",
+      "name": "POST rule-band-for",
+      "position": [-160, -400],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-rule-band-for"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM rubbercity_ofm_durometer_band('{{ String((($json.body && $json.body.alias) || '')).replace(/'/g, '') }}');",
+        "options": {}
+      },
+      "id": "q-band-for",
+      "name": "RPC: durometer_band",
+      "position": [80, -400],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "jFjeYH6Nt3aRNkoM", "name": "Supabase_database" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-band-for",
+      "name": "Respond band-for",
+      "position": [320, -400],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-rule-safety-margin", "responseMode": "responseNode", "options": {} },
+      "id": "wh-margin",
+      "name": "POST rule-safety-margin",
+      "position": [-160, -240],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-rule-safety-margin"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rubbercity_ofm_safety_margin(\n  '{{ String((($json.body && $json.body.family) || '')).replace(/'/g, '') }}',\n  '{{ String((($json.body && $json.body.band)   || '')).replace(/'/g, '') }}',\n  {{ Number((($json.body && $json.body.parede_mm) ?? 'null')) || 'NULL' }}\n) AS margin;",
+        "options": {}
+      },
+      "id": "q-margin",
+      "name": "RPC: safety_margin",
+      "position": [80, -240],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "jFjeYH6Nt3aRNkoM", "name": "Supabase_database" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-margin",
+      "name": "Respond safety-margin",
+      "position": [320, -240],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-rule-can-substitute", "responseMode": "responseNode", "options": {} },
+      "id": "wh-substitute",
+      "name": "POST rule-can-substitute",
+      "position": [-160, -80],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-rule-can-substitute"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rubbercity_ofm_can_substitute(\n  '{{ String((($json.body && $json.body.source_family) || '')).replace(/'/g, '') }}',\n  '{{ String((($json.body && $json.body.target_family) || '')).replace(/'/g, '') }}',\n  '{{ String((($json.body && $json.body.band_code)     || '')).replace(/'/g, '') }}'\n) AS allowed;",
+        "options": {}
+      },
+      "id": "q-substitute",
+      "name": "RPC: can_substitute",
+      "position": [80, -80],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "jFjeYH6Nt3aRNkoM", "name": "Supabase_database" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-substitute",
+      "name": "Respond can-substitute",
+      "position": [320, -80],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-rule-can-mix-colors", "responseMode": "responseNode", "options": {} },
+      "id": "wh-mix",
+      "name": "POST rule-can-mix-colors",
+      "position": [-160, 80],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-rule-can-mix-colors"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rubbercity_ofm_can_mix_colors(\n  '{{ String((($json.body && $json.body.source_color) || '')).replace(/'/g, '') }}',\n  '{{ String((($json.body && $json.body.target_color) || '')).replace(/'/g, '') }}'\n) AS allowed;",
+        "options": {}
+      },
+      "id": "q-mix",
+      "name": "RPC: can_mix_colors",
+      "position": [80, 80],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "jFjeYH6Nt3aRNkoM", "name": "Supabase_database" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-mix",
+      "name": "Respond can-mix-colors",
+      "position": [320, 80],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-rule-customer-override", "responseMode": "responseNode", "options": {} },
+      "id": "wh-customer",
+      "name": "POST rule-customer-override",
+      "position": [-160, 240],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-rule-customer-override"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rubbercity_ofm_resolve_customer(\n  '{{ String((($json.body && $json.body.customer)     || '')).replace(/'/g, '') }}',\n  '{{ String((($json.body && $json.body.family)       || '')).replace(/'/g, '') }}',\n  '{{ String((($json.body && $json.body.band)         || '')).replace(/'/g, '') }}',\n  '{{ String((($json.body && $json.body.color)        || '')).replace(/'/g, '') }}',\n  '{{ String((($json.body && $json.body.product_desc) || '')).replace(/'/g, '') }}'\n) AS override;",
+        "options": {}
+      },
+      "id": "q-customer",
+      "name": "RPC: resolve_customer",
+      "position": [80, 240],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "jFjeYH6Nt3aRNkoM", "name": "Supabase_database" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-customer",
+      "name": "Respond customer-override",
+      "position": [320, 240],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-rule-recipe", "responseMode": "responseNode", "options": {} },
+      "id": "wh-recipe",
+      "name": "POST rule-recipe",
+      "position": [-160, 400],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-rule-recipe"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rubbercity_ofm_recipe(\n  '{{ String((($json.body && $json.body.recipe_code) || '')).replace(/'/g, '') }}',\n  {{ Number((($json.body && $json.body.total_kg) ?? 0)) || 0 }}\n) AS components;",
+        "options": {}
+      },
+      "id": "q-recipe",
+      "name": "RPC: recipe",
+      "position": [80, 400],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "jFjeYH6Nt3aRNkoM", "name": "Supabase_database" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-recipe",
+      "name": "Respond recipe",
+      "position": [320, 400],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    }
+  ],
+  "connections": {
+    "POST rule-band-for":          { "main": [[{ "node": "RPC: durometer_band",  "type": "main", "index": 0 }]] },
+    "RPC: durometer_band":         { "main": [[{ "node": "Respond band-for",     "type": "main", "index": 0 }]] },
+    "POST rule-safety-margin":     { "main": [[{ "node": "RPC: safety_margin",   "type": "main", "index": 0 }]] },
+    "RPC: safety_margin":          { "main": [[{ "node": "Respond safety-margin","type": "main", "index": 0 }]] },
+    "POST rule-can-substitute":    { "main": [[{ "node": "RPC: can_substitute",  "type": "main", "index": 0 }]] },
+    "RPC: can_substitute":         { "main": [[{ "node": "Respond can-substitute","type":"main", "index": 0 }]] },
+    "POST rule-can-mix-colors":    { "main": [[{ "node": "RPC: can_mix_colors",  "type": "main", "index": 0 }]] },
+    "RPC: can_mix_colors":         { "main": [[{ "node": "Respond can-mix-colors","type":"main", "index": 0 }]] },
+    "POST rule-customer-override": { "main": [[{ "node": "RPC: resolve_customer","type": "main", "index": 0 }]] },
+    "RPC: resolve_customer":       { "main": [[{ "node": "Respond customer-override","type":"main","index": 0 }]] },
+    "POST rule-recipe":            { "main": [[{ "node": "RPC: recipe",          "type": "main", "index": 0 }]] },
+    "RPC: recipe":                 { "main": [[{ "node": "Respond recipe",       "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "rbct-rules-bridge-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "notes": "Bridge dos 6 endpoints de regras OFM. Chama RPCs Supabase definidas em migrations-clean/010_ofm_rules_rpc.sql. Antes de ativar, confirme a credencial Postgres (id jFjeYH6Nt3aRNkoM = Supabase_database) e que as RPCs foram aplicadas via 010_ofm_rules_rpc.sql + 011_ofm_seeds.sql."
+  },
+  "id": "RubbercityRulesBridge",
+  "tags": []
+}

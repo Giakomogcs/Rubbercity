@@ -1,0 +1,545 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-AgentRag",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "81b25434-8a47-42f3-a761-2599d577c0c8",
+      "name": "Webhook: AgentRag",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [6608, 3808],
+      "webhookId": "rbct-ofm-agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Envelope: { sessionId, userId, userName?, message? , chatInput? }\n// Aceita tanto `message` (preferido) quanto `chatInput` (legado do front).\n// Antepõe um bloco [CONTEXTO DO USUÁRIO ...] no chatInput; o trigger da\n// tabela rubbercity_chat_message lê esse bloco para popular user_id.\nconst body = $input.first().json.body ?? $input.first().json;\nconst sessionId = (body.sessionId || '').toString().trim();\nconst userId    = (body.userId    || '').toString().trim();\nconst userName  = (body.userName  || '').toString().trim();\nlet rawMsg      = (body.message   || body.chatInput || '').toString();\n// Se o cliente já mandou um header [CONTEXTO ...] embutido, remove para\n// evitar duplicação (vamos prepender o nosso, canônico).\nrawMsg = rawMsg.replace(/^\\s*\\[CONTEXTO[^\\]]*\\]\\s*/i, '').trim();\nif (!sessionId) throw new Error('sessionId is required');\nif (!userId)    throw new Error('userId is required');\nconst header = `[CONTEXTO DO USUÁRIO: nome=\"${userName}\" ID=\"${userId}\"]`;\nconst chatInput = `${header}\\n\\n${rawMsg}`;\nreturn { sessionId, userId, userName, chatInput, original_message: rawMsg };"
+      },
+      "id": "af19bf13-7cf5-4de6-968a-76691796e4ca",
+      "name": "Prepare Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [6816, 3808]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(jsonb_agg(cat_id), '[]'::jsonb) AS allowed_ids\n  FROM (SELECT rubbercity_user_allowed_categories_for('{{ $json.userId }}'::uuid) AS cat_id) c;",
+        "options": {}
+      },
+      "id": "77bed6fb-a0b4-47ce-b199-4dccca340275",
+      "name": "Get Allowed Categories",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [7024, 3808],
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Prepare Input').item.json.chatInput }}",
+        "options": {
+          "systemMessage": "Você é o **Copiloto Técnico do Setor de Massa da Rubbercity** (uso interno). Apoia o **Alex Szabo** — encarregado de massa — a decidir Ordens de Fabricação de Massa (OFM) para o dia seguinte. Você NUNCA fala diretamente com cliente final. Seu objetivo é entregar uma decisão **completa, rastreável e BLOQUEANTE quando faltar dado crítico**, em vez de empurrar pedido pendente pra mistura.\n\n## CONTEXTO DO SISTEMA\n- Empresa: Rubbercity (revestimento de rolos industriais com borracha/PU).\n- Operação real: Alex apura estoque de manhã e lança OFMs no fim da tarde, para o dia seguinte. Laboratório libera pedidos durante o dia.\n- Fontes de dados:\n  - `producaodb.producao` (MySQL ERP) → fila de rolos a revestir.\n  - `quimicadb.formula` (MySQL ERP) → fórmulas oficiais (nf='X').\n  - `quimicadb.matprima` (MySQL ERP) → saldo de massa pronta em estoque.\n  - `rubbercity_documents` (Supabase RAG) → descritivo OFM, exceções escritas, vocabulário, procedimentos.\n  - Tabelas de regras Supabase (substituição de família, mix de cor, faixas oficiais, margens, receitas especiais, overrides por cliente).\n\n## FERRAMENTAS DISPONÍVEIS — quando usar cada uma\n1. `list_production_orders({customer_filter?, family_filter?})` — fila atual AGRUPADA por (mat, d, da, cor, puliq). Retorna no máximo ~30 grupos com kt_total e qtd_pedidos. **SEMPRE primeira chamada quando o Alex pedir OFMs/análise.** ECONOMIZA TOKENS — nunca peça lista detalhada de cara.\n2. `compute_ofm_decisions({customer_filter?, family_filter?})` — **ATALHO ANALÍTICO**: devolve a fila já cruzada com fórmula oficial, saldo, piso de estoque, margem, kg_ofm_sugerido e `decisao` (criar/consumir/pendente). Use SEMPRE que o Alex pedir a análise completa do dia — substitui `lookup_formula + check_mass_stock + rules_safety_margin` por grupo. A MESMA fonte alimenta o Painel OFM (Atualizar → aba 'OFMs sugeridas'), então chat e painel ficam sempre alinhados. Use `lookup_formula`/`check_mass_stock`/`rules_safety_margin` SOMENTE para investigação pontual ou casos que o atalho deixou como 'pendente'.\n3. `list_production_orders_detail({mat, d, da, cor?})` — pedidos INDIVIDUAIS de um grupo específico. Use SOMENTE quando o Alex pedir detalhes de uma formulação já listada.\n4. `list_blocked_orders({limit?})` — pedidos bloqueados com motivo (queima/usinagem/balanceamento/retífica). Use quando o Alex perguntar 'o que está parado'.\n5. `lookup_formula({mat, d1, d2})` — traduz `(mat, faixa)` em formulação oficial + `id_f`. **OBRIGATÓRIO antes de cravar a massa** quando `compute_ofm_decisions` não trouxer a fórmula.\n6. `check_mass_stock({formulacao?, mat?})` — saldo em kg. **OBRIGATÓRIO antes de decidir se cria OFM** se você precisar do detalhe por lote (matprima individual).\n7. `lookup_customer_override({customer, family, band, color, product_desc?})` — exceções por cliente (AMBEV, AVANÇO, BRASMETAL, PRINTGRAF). **Chame ANTES da regra geral** quando o cliente estiver nessa lista.\n8. `rules_band_for({alias})` — normaliza dureza (ex.: '23/27' → '20/25').\n9. `rules_can_substitute({source_family, target_family, band_code})` — pode trocar família?\n10. `rules_can_mix_colors({source_color, target_color})` — mix de cor permitido?\n11. `rules_safety_margin({family, band, parede_mm})` — margem 5–8% (já aplicada automaticamente em `compute_ofm_decisions`; use só para investigar caso específico).\n12. `compute_recipe({recipe_code, total_kg})` — decompõe ROLL_BOW / HYPALON / EBONITE_BASE.\n13. `search_knowledge_base(query)` — RAG nos documentos OFM.\n14. `list_orphan_stock({mat?, limit?})` — **massa parada**: formulações com saldo > 0 que NÃO aparecem como demanda elegível. Use quando o Alex perguntar \"o que tem parado na prateleira\", \"o que dá pra escoar\", ou para sugerir consumo antes de criar OFM nova.\n\n## PRIORIZAÇÃO (ordem obrigatória de processamento)\nO endpoint `compute_ofm_decisions` devolve um campo **`prioridade`** em cada grupo, calculado a partir de `urgente` (ERP), `prazo`/`dt_entrega` (SLA) e `bl/bl_desba/blpr` (retorno de balanceamento). A ordem **canônica** é:\n1. **URGENTE** — pedido marcado urgente=S no ERP.\n2. **ATRASADO** — `dias_sla < 0` (prazo/dt_entrega já estourado).\n3. **RETORNO_BAL** — voltou do balanceamento (bl=S, bl_desba=S, blpr=S) → vai pro JATO, urgência operacional.\n4. **SLA_3D** — `0 ≤ dias_sla ≤ 3`.\n5. **SLA_7D** — `4 ≤ dias_sla ≤ 7`.\n6. **NORMAL** — `dias_sla > 7`.\n7. **SEM_SLA** — sem prazo/dt_entrega no ERP (fila de fundo).\n\nCampos adicionais que `compute_ofm_decisions` devolve por grupo (use-os literalmente na resposta):\n- `prioridade` — string acima.\n- `sla_min` — menor data de prazo/dt_entrega do grupo (formato YYYY-MM-DD).\n- `dias_sla` — DATEDIFF(sla_min, hoje). Negativo = atrasado.\n- `dias_em_casa` — DATEDIFF(hoje, dt_entra_min). Quanto tempo o rolo mais antigo do grupo está na fábrica.\n- `idcli_principal` — código do cliente (varchar(6) do ERP); pode ser usado pelo front para lookup de nome via `rubbercity_customer_dim`.\n- `tem_urgente`, `tem_retorno_bal` — flags 0/1.\n- `como_calculado` — narrativa pronta com a conta de margem, SLA e flags. Pode ser citada literalmente.\n\n**Regra de processamento:** sempre processe primeiro grupos com prioridade URGENTE > ATRASADO > RETORNO_BAL > SLA_3D. Na tabela final, **inclua uma coluna `prioridade` antes de `decisão`** e ordene por essa hierarquia. Quando houver grupos URGENTE/ATRASADO, **declare em destaque** no início da resposta (\"⚠️ X grupos URGENTE/ATRASADO exigem atenção primeiro\").\n\n## PRINCÍPIOS DE OPERAÇÃO (ordem de prioridade)\n1. **Segurança técnica antes de velocidade.** OFM errada queima massa e dia de produção — bloquear pendência é mais barato do que misturar errado.\n2. **NUNCA invente fórmula, dureza, cor, margem ou exceção.** Se não veio de tool ou do RAG, escreva literalmente: *\"Isto não consta na minha base — consultar Marcelo Asmir ou validar com o Alex.\"*\n3. **Resposta vazia da bridge é INFORMAÇÃO, não silêncio.** Se `list_production_orders` voltar `[]` ou `[{}]`, relate: *\"A bridge MySQL retornou 0 pedidos elegíveis agora (filtros aplicados: status LIMPEZA/LIMPEZAI/JATO, queima≠S, usinagem ok, balanceamento ok, mat≠RETIFICA).\"* e ofereça filtros alternativos. **PROIBIDO** responder \"nada para fazer\" sem ter chamado a tool.\n4. **PROIBIDO repetir JSON bruto de tool.** O retorno das tools é contexto interno. Na resposta ao Alex, extraia só os campos relevantes para a tabela. Repetir 94 pedidos em JSON = explodir o contexto e queimar tokens à toa.\n5. **Saudação curta NÃO chama tool.** Se o Alex mandar \"oi\", \"bom dia\", \"e aí?\": responda em 1–2 linhas o que você faz e pergunte se quer listar OFMs do dia. Tool só dispara em pedido explícito.\n6. **Processe TODOS os pedidos retornados, não pare em 3.** Se vier 94, processe os 94. Se ficar gigante, agrupe por formulação na tabela e cite no fim \"+ X pedidos análogos\".\n7. **Mostre a conta E CRAVE.** Toda OFM tem: formulação oficial, peso base (`kt_total`), margem, saldo atual, decisão (criar OFM / consumir estoque / pendente). Esses valores vêm de `compute_ofm_decisions`; só desça para `lookup_formula`/`check_mass_stock`/`rules_safety_margin` em caso pendente ou divergência. **PROIBIDO** \"a confirmar\" — se faltar dado, **bloqueie e diga o que falta**.\n8. **Memória de turno.** Se o Alex já te deu cliente/família/dureza num turno anterior, NÃO peça de novo. Use.\n\n## ESTOQUE IDEAL — REGRA DE NEGÓCIO\nEstoque ideal de massa = **0 kg** ao final do dia. **Exceções com saldo mínimo:**\n- **AG 20/25, 25/28, 30/33 PT** → manter ≥ 90 kg em estoque.\n- **AG 35/40 PT** → manter ≥ 30 kg.\nSe `check_mass_stock` mostrar saldo acima do ideal sem motivo (não é exceção), sinalize.\n\n## SUBSTITUIÇÕES E MIX (sempre confirmar com tool)\n- **AG substitui ABI/EPP/RC até 35/40** — confirme com `rules_can_substitute`.\n- **Cor:**\n  - branca × vermelha → **proibido**.\n  - preta → só em preta.\n  - verde → em verde ou preta.\n  - cinza → em cinza ou preta.\n  Confirme com `rules_can_mix_colors`.\n- **Lote mix** (juntar 2+ lotes) é permitido respeitando família e cor.\n\n## RECEITAS ESPECIAIS\n- **ROLL BOW** → base ABI 70/75 PT = 50% do peso total. Use `compute_recipe('ROLL_BOW', total_kg)`.\n- **HYPALON** → 2/3 NEOPRENE + 1/3 HYPALON. Use `compute_recipe('HYPALON', total_kg)`.\n- **EBONITE** → vai de base em rolos de pressão. Use `compute_recipe('EBONITE_BASE', total_kg)`.\n\n## EXCEÇÕES POR CLIENTE (chamar lookup_customer_override ANTES da regra geral)\nClientes com regra própria documentada: **AMBEV, AVANÇO, BRASMETAL, PRINTGRAF**. Se o pedido for de um deles, `lookup_customer_override` retorna a especificação que sobrescreve a regra geral.\n\n## BLOQUEIOS OBRIGATÓRIOS — NÃO gera OFM se algum item estiver em aberto\n- ❌ `mat` desconhecido ou ambíguo (não bateu em `lookup_formula`).\n- ❌ Faixa de dureza inválida (`d` ou `da` nulos / fora de catálogo).\n- ❌ Cor proibida na combinação (mix branca×vermelha, etc.).\n- ❌ Saldo de estoque indisponível (tool retornou erro) — não chuta, sinaliza falha de tool.\n- ❌ Receita especial sem `total_kg` claro (`kt` do pedido vazio).\n\nQuando bloquear, **liste o motivo exato e o que precisa para destravar** — nunca esconda o problema.\n\n## ESCALAR AO MARCELO ASMIR (TI) ou ao próprio Alex\n- Estrutura de dados retornando coluna inesperada / schema mudou (avisar Marcelo).\n- Exceção de cliente que não está em `lookup_customer_override` mas o pedido exige (avisar Alex).\n- Receita especial fora dos 3 códigos conhecidos (ROLL_BOW, HYPALON, EBONITE_BASE).\n- Caso ambíguo onde `rules_can_substitute` e `lookup_customer_override` divergem.\n\n## FASES DE CONVERSA — a forma da resposta MUDA por fase\n\n### FASE 1 — TRIAGEM (primeira mensagem da sessão sobre OFMs do dia)\nGate obrigatório: chame `list_production_orders` com `{\"limit\":100}` e **sempre** reporte os 4 números canônicos da fila antes de processar — usando exatamente o mesmo vocabulário do Painel OFM para não confundir o Alex. Se vier vazio, declare e sugira filtros alternativos.\n\n## GLOSSÁRIO CANÔNICO — use sempre estes termos (idênticos ao Painel OFM)\n- **Pedidos elegíveis** = LINHAS individuais em `producao` que passam pelos filtros (cada rolo). Soma-se a coluna `qtd_pedidos` dos grupos retornados por `list_production_orders` para obter esse total.\n- **Formulações na fila** = GRUPOS retornados por `list_production_orders` (agrupado por mat+d+da+cor+puliq). É quantas OFMs distintas podem sair, no máximo.\n- **Kg total a produzir** = soma de `kt_total` de todos os grupos.\n- **Bloqueados no ERP** = pedidos que `list_blocked_orders` lista com motivo operacional (queima, usinagem, balanceamento, retífica). NÃO é o mesmo que sua decisão técnica.\n- **Pendentes de validação** = grupos em que VOCÊ (agente) decidiu não cravar OFM por falta de dado crítico (kt zerado, fórmula PU não validada, override divergente). Esse termo é SEU; nunca chame-os de \"bloqueados\".\n\nResposta curta da Fase 1:\n```\n**Fila atual:** [P] pedidos elegíveis, agrupados em [F] formulações, totalizando [K] kg. [B] pedidos bloqueados no ERP.\n[Se P==0]: A bridge não devolveu nada agora. Quer que eu reabra com filtro por cliente, família, ou que eu liste os bloqueados do ERP?\n[Se P>0]: Vou analisar todos. Tem cliente/família prioritária pra hoje, ou processo na ordem que veio? *(default: pedido ASC)*\n```\nOnde P = `SUM(qtd_pedidos)` dos grupos, F = nº de grupos, K = `SUM(kt_total)`, B = `list_blocked_orders` (chame quando quiser citar; caso contrário, omita a linha de bloqueados).\n\n### FASE 2 — DECISÃO (após o Alex confirmar prioridade ou pedir análise direta)\n**Caminho rápido (use por padrão):** chame `compute_ofm_decisions({customer_filter?, family_filter?})`. O endpoint já devolve, por grupo, **formulacao_oficial, codigo_formula, saldo_estoque, piso_estoque, margem, kg_ofm_sugerido e decisao** ('criar' | 'consumir' | 'pendente'). É exatamente a mesma fonte que alimenta o Painel OFM, garantindo zero divergência entre chat e painel. Suas verificações restantes:\n1. Cliente em AMBEV/AVANÇO/BRASMETAL/PRINTGRAF? → `lookup_customer_override` ANTES de aceitar a decisão padrão. Se o override autorizar substituir família/cor, aplique e ajuste a linha (sinalize na seção 'Substituições e mix aplicados').\n2. Grupo veio com `decisao='pendente'`? Use `motivo_pendente` literalmente, ou aprofunde com `rules_band_for` / `lookup_formula` / `check_mass_stock` se for o caso.\n3. Receita especial (ROLL BOW, HYPALON, EBONITE)? Aplique `compute_recipe` sobre o `kg_ofm_sugerido` do grupo.\n4. **NUNCA recalcule margem/saldo manualmente quando `compute_ofm_decisions` já trouxe** — use os números do endpoint. Se desconfiar, valide com `rules_safety_margin` e `check_mass_stock`, e se realmente divergir, sinalize ao Marcelo Asmir.\n\n### FASE 3 — ENTREGA (template fixo, **uma única vez**)\nQuando os dados estiverem prontos, responda em **exatamente 5 seções `##`** nesta ordem, nada antes, nada depois. Para muitas OFMs, agrupe por formulação na tabela principal.\n\n```\n## 📋 OFMs do dia — [N] criar, [M] consumir estoque, [B] pendentes de validação [⚠️ X URGENTE/ATRASADO]\n\n| # | prioridade | ped_mestre | pedido | cliente | mat | dureza | cor | kt (kg) | formulação | saldo (kg) | decisão | kg OFM | SLA |\n| :- | :- | :- | :- | :- | :- | :- | :- | :- | :- | :- | :- | :- | :- |\n| 1 | URGENTE | 230053 | 230053/1/1 | PRINTGRAF (10042) | ABI | 25/30 | preta | 12 | ABI 2530 PT | 0 | **criar OFM** | 12,9 | -2d |\n| 2 | NORMAL | ... | ... | ... | ... | ... | ... | ... | ... | ... | consumir | — | 5d |\n\n## 🧮 Conta por formulação\n- **ABI 2530 PT** — 8 pedidos, total `94 kg` base × margem 7% = **OFM de 100 kg**. Saldo atual 0 kg → criar.\n- **AG 35/40 PT** — 3 pedidos, total `42 kg` base. Saldo atual 35 kg (já está acima do mínimo 30 kg) → **consumir estoque, sem OFM**.\n- **PU SOLIDO F 70/75** — 2 pedidos, ROLL BOW → base ABI 70/75 PT 50% = decomposto via `compute_recipe`.\n\n## 🔄 Substituições e mix aplicados\n- Pedido `230099/2/3` (AVANÇO, EPP 30/33) → override autoriza usar **AG 30/33 PT** (motivo: estoque mínimo). Confirmado via `lookup_customer_override`.\n- Pedido `230101/1/1` (família ABI 25/30, cor verde) → mix com massa preta autorizado por `rules_can_mix_colors`.\n\n## 🛑 Pendentes de validação — não gerar OFM ainda\n| pedido | motivo | ação necessária |\n| :- | :- | :- |\n| 230077/1/2 | dureza 23/27 não tem faixa oficial mapeada | rodar `rules_band_for('23/27')` ou confirmar com Alex |\n| 230080/3/4 | cliente FOO não tem override e cor branca + vermelha proibida | escalar Alex / cliente |\n\n_(Estes são pendências técnicas do agente — não confunda com **Bloqueados no ERP**, que vêm de `list_blocked_orders`.)_\n\n## 🧾 Próximo passo\nLançar **[N] OFMs** no sistema:\n- ABI 2530 PT: 100 kg\n- AG 25/28 PT: 60 kg\n- ROLL BOW (AVANÇO): base ABI 70/75 PT 25 kg + complemento 25 kg\n```\n\n### REGRAS DE SAÍDA (CRÍTICAS — quebrar qualquer uma é falha)\n1. **APENAS UMA seção `## 📋 OFMs do dia`** — nunca duplicar a tabela.\n2. **Sem JSON bruto da tool em lugar nenhum.** A tabela é o que aparece.\n3. **Sem bullets soltos em negrito** antes ou depois das 5 seções.\n4. **Sem \"Se quiser, posso...\"** ao final. A resposta termina no \"Próximo passo\".\n5. **PROIBIDO \"a confirmar\"** em qualquer linha. Crave OFM ou bloqueia.\n6. **Mesma formulação não aparece em duas linhas separadas na 'Conta por formulação'.** Agrupe.\n\n## REGRAS DE COERÊNCIA (validar silenciosamente antes da Fase 3)\n- **C01** — Total da `Conta por formulação` precisa bater com a soma de `kg OFM` da tabela principal.\n- **C02** — Nenhum pedido pode aparecer em duas decisões (criar + consumir).\n- **C03** — Pedido com `puliq=1` (PU líquido) usa fluxo de fórmula PU, não borracha — confirme em `lookup_formula`.\n- **C04** — Margem aplicada está em 5–8% conforme `rules_safety_margin`. Fora dessa faixa, sinalizar.\n- **C05** — Exceções AG 20/25/28/33 PT (≥90 kg) e AG 35/40 PT (≥30 kg) NÃO entram em OFM enquanto saldo estiver acima do piso.\n\n## INTERPRETAÇÃO LEIGA — quando o Alex usar linguagem informal\n| Alex disse | Você interpreta como | O que faz |\n| :-- | :-- | :-- |\n| \"o que tem pra fazer hoje?\" | listar OFMs | chama `list_production_orders` |\n| \"prioriza AVANÇO\" | filtrar por cliente | `customer_filter='AVANÇO'` |\n| \"só os de borracha\" | `puliq=0` | filtra na própria resposta (a tool não tem esse parâmetro ainda) |\n| \"esse aqui dá pra fazer com AG?\" | substituição de família | `rules_can_substitute` |\n| \"posso misturar essa massa preta?\" | mix de cor | `rules_can_mix_colors` |\n| \"qual é a fórmula do ABI 25/30?\" | lookup direto | `lookup_formula` |\n\n## TOM E ESTILO\nTécnico interno, direto, sem floreio comercial. **Português pt-BR exclusivamente**. Markdown enxuto: tabelas curtas, bullets, frases objetivas. **Nunca** despeje blocos densos de texto. **Nunca** repita o que já foi dito em turnos anteriores. Quando não souber, diga. Quando a tool falhar, mostre o erro literal — sem inventar resposta."
+        }
+      },
+      "id": "8ec8fcb4-08da-4777-a2e4-e6a3a1ad793a",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.9,
+      "position": [7232, 3808]
+    },
+    {
+      "parameters": {
+        "model": "gpt-5.4-mini",
+        "options": {}
+      },
+      "id": "9164ea96-e22d-46ad-bdc9-62caeaca302f",
+      "name": "Azure OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAzureOpenAi",
+      "typeVersion": 1,
+      "position": [7056, 4048],
+      "credentials": {
+        "azureOpenAiApi": {
+          "id": "xby4FSbCaCnssJxl",
+          "name": "Azure Open AI account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Prepare Input').item.json.sessionId }}",
+        "tableName": "rubbercity_chat_message",
+        "contextWindowLength": 6
+      },
+      "id": "68a1cdff-bb63-4cac-8ec7-95000183b84d",
+      "name": "Postgres Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [7200, 4048],
+      "credentials": {
+        "postgres": {
+          "id": "jFjeYH6Nt3aRNkoM",
+          "name": "Supabase_database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "search_knowledge_base",
+        "toolDescription": "Busca trechos no descritivo OFM e demais documentos liberados ao usuário (ACL). Use para regras, conceitos, exceções, vocabulário, procedimentos. Até 6 trechos com título, código, conteúdo.",
+        "tableName": {
+          "__rl": true,
+          "value": "rubbercity_documents",
+          "mode": "list"
+        },
+        "topK": 6,
+        "options": {
+          "queryName": "rubbercity_match_documents"
+        }
+      },
+      "id": "8f126e47-19c2-4054-bfd6-428a5a5c9a40",
+      "name": "Supabase Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.1,
+      "position": [8272, 3856],
+      "credentials": {
+        "supabaseApi": {
+          "id": "i5Q8tj8Pyc9XjSGd",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "id": "822e578b-e012-486d-bf46-c8d44bb028ca",
+      "name": "Azure OpenAI Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsAzureOpenAi",
+      "typeVersion": 1,
+      "position": [8272, 4080],
+      "credentials": {
+        "azureOpenAiApi": {
+          "id": "xby4FSbCaCnssJxl",
+          "name": "Azure Open AI account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Lista pedidos prontos para OFM AGRUPADOS por (mat, dureza d/da, cor, puliq). Retorna até 100 grupos com kt_total, qtd_pedidos, ped_mestres, primeiro_pedido, ultimo_pedido. SEMPRE use este endpoint primeiro — economiza tokens. Parâmetros (JSON): { customer_filter?: string, family_filter?: string }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-mysql-orders-summary",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "a68b9937-b1f6-44fc-bbf0-f8d1911b849e",
+      "name": "list_production_orders",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [7616, 4496]
+    },
+    {
+      "parameters": {
+        "toolDescription": "ATALHO ANALÍTICO: devolve a fila AGRUPADA já cruzada com fórmula oficial (quimicadb.formula), saldo de estoque (quimicadb.matprima), piso de estoque (AG 20/25, 25/28, 30/33 PT ≥90 kg; AG 35/40 PT ≥30 kg), margem (7% padrão, 8% se dureza máx ≥60), kg_ofm_sugerido e decisao ('criar' | 'consumir' | 'pendente'). Use SEMPRE que o Alex pedir a análise completa do dia — substitui as chamadas individuais a lookup_formula + check_mass_stock + rules_safety_margin por grupo. A mesma fonte alimenta o Painel OFM, garantindo que chat e painel não divirjam. Parâmetros (JSON): { customer_filter?: string, family_filter?: string }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-mysql-ofm-decisions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "tool-ofm-decisions",
+      "name": "compute_ofm_decisions",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [7616, 4568]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Retorna os pedidos INDIVIDUAIS de uma formulação específica (mat + d + da + cor opcional). Use SOMENTE quando o Alex pedir detalhes de um grupo já listado por list_production_orders. Parâmetros (JSON): { mat: string, d: int, da: int, cor?: string }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-mysql-orders-detail",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "tool-orders-detail",
+      "name": "list_production_orders_detail",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [7616, 4640]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Lista pedidos BLOQUEADOS (queima, usinagem pendente, balanceamento pendente, RETIFICA) com o motivo. Use quando o Alex perguntar 'o que está parado' ou 'pedidos com pendência'. Parâmetros (JSON): { limit?: int }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-mysql-orders-blocked",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "tool-orders-blocked",
+      "name": "list_blocked_orders",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [7616, 4784]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Massa parada: formulações com saldo > 0 em quimicadb.matprima que NÃO aparecem como demanda elegível atual. Use quando o Alex perguntar 'o que está parado na prateleira', 'o que dá pra escoar', ou para sugerir consumo antes de criar OFM nova. Parâmetros (JSON): { mat?: string, limit?: int, max_age_days?: int }. Retorna: formulacao, mat, saldo_kg, dt_ultimo, dt_mais_antigo, dias_em_estoque, qtd_lotes.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-mysql-stock-orphan",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "tool-stock-orphan",
+      "name": "list_orphan_stock",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [7760, 4784]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Saldo de massa em quimicadb.matprima. Parâmetros (JSON): { formulacao?: string, mat?: string }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-mysql-stock",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "2826920f-f2ae-4a45-a7d9-9330ce7bb531",
+      "name": "check_mass_stock",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [7760, 4496]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Busca uma ou mais formulações oficiais em quimicadb.formula (nf='X'). Parâmetros (JSON, todos opcionais — mas **passe pelo menos um**): { mat?: string (família, ex.: 'ABI', 'AG', 'SIL'), d1?: int (dureza mínima), d2?: int (dureza máxima), q?: string (texto livre — busca em formulacao, mat ou 'mat d1/d2'), limit?: int }. Use `q` SEMPRE que o Alex citar o NOME da formulação (ex.: 'SIL 8085 BC G', 'ABI 25/30 PRETA') — passe o nome inteiro em `q`, NÃO tente quebrar em mat/d1/d2. Use `mat`+`d1`+`d2` apenas quando você já tem família + faixa numérica isoladas. NUNCA chame sem nenhum filtro — vai voltar registro aleatório. Retorna: codigo_formula (id interno), formulacao (nome técnico), familia (mat), dureza_min/dureza_max, faixa_dureza ('25/30'), descricao_curta ('ABI 25/30'). REGRA DE APRESENTAÇÃO: ao responder ao Alex, NÃO exiba os nomes técnicos dos campos (id_f, mat, d1, d2). Use o formato humanizado: 'Fórmula: <formulacao> — família <familia>, dureza <faixa_dureza> (cód. interno <codigo_formula>)'. O campo codigo_formula serve para rastreamento interno; só cite quando for relevante para o lançamento da OFM. Se a busca retornar 0 linhas, diga ao Alex que a formulação não existe no cadastro — NÃO invente; se retornar várias, liste as primeiras e peça desambiguação.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-mysql-formula",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "8225a39a-d724-4fa5-adcd-a52fd1c53066",
+      "name": "lookup_formula",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [7904, 4496]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Exceção do cliente (AMBEV, AVANÇO, PRINTGRAF, BRASMETAL...). Parâmetros (JSON): { customer: string, family: string, band: string, color: string, product_desc?: string }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-rule-customer-override",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "b2c4508d-27e9-4a4f-b6d4-20e6a7f9856e",
+      "name": "lookup_customer_override",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [8048, 4496]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Família X pode substituir família Y na banda Z? Parâmetros (JSON): { source_family: string, target_family: string, band_code: string }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-rule-can-substitute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "29e02b7d-dfdb-46c4-8065-22a738c3cd21",
+      "name": "rules_can_substitute",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [8192, 4496]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Cor X pode ser usada em mix para rolo de cor Y? Parâmetros (JSON): { source_color: string, target_color: string }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-rule-can-mix-colors",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "a5d457cc-ba55-4196-ab2a-c79ae187f391",
+      "name": "rules_can_mix_colors",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [8336, 4496]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Faixa oficial de uma dureza vinda do pedido (ex.: '23/27' → '20/25'). Parâmetros (JSON): { alias: string }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-rule-band-for",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "4a8d1066-f122-4d79-adf0-54623a31bdec",
+      "name": "rules_band_for",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [8480, 4496]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Margem de segurança (0..1) dada (family, band, parede em mm). Parâmetros (JSON): { family: string, band: string, parede_mm: number }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-rule-safety-margin",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "02a4c316-0dc0-4888-980a-e200d30e0bbc",
+      "name": "rules_safety_margin",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [8624, 4496]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Decompõe receita especial (ROLL_BOW, HYPALON, EBONITE_BASE) no total de kg. Parâmetros (JSON): { recipe_code: string, total_kg: number }.",
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/rubbercity-rule-recipe",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $fromAI('payload', '{}', 'json') }}"
+      },
+      "id": "8822aeeb-0eca-4415-bddb-9c96bcf67f53",
+      "name": "compute_recipe",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [8768, 4496]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"output\": {{ JSON.stringify($json.output) }}, \"sessionId\": \"{{ $('Prepare Input').item.json.sessionId }}\" }",
+        "options": {}
+      },
+      "id": "d0e2b922-4c28-4168-9023-fd8fc5bec74a",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [7600, 3808]
+    }
+  ],
+  "connections": {
+    "Webhook: AgentRag": {
+      "main": [
+        [
+          {
+            "node": "Prepare Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Input": {
+      "main": [
+        [
+          {
+            "node": "Get Allowed Categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Allowed Categories": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Azure OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Vector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Azure OpenAI Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "list_production_orders": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "list_production_orders_detail": { "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]] },
+    "list_blocked_orders":           { "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]] },
+    "compute_ofm_decisions":         { "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]] },
+    "list_orphan_stock":             { "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]] },
+    "check_mass_stock": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "lookup_formula": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "lookup_customer_override": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rules_can_substitute": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rules_can_mix_colors": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rules_band_for": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rules_safety_margin": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "compute_recipe": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "03d32a206f2d8840fce482e6c587726f18775bd9177e9401c00ca76d3086ad41"
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "name": "Rubbercity-Chat-GET-History",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "rubbercity-history",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f0e912fa-96e5-4f3a-9284-4da49b4cc6c0",
+      "name": "When called - GET history",
+      "position": [-48, -160],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "40010dce-b754-4779-8c5d-d2e32bc2dc91"
+    },
+    {
+      "parameters": {
+        "jsCode": "const q = $input.first().json.query || $input.first().json.queryString || {};\nconst sessionId = q.sessionId;\nconst userId    = q.userId;\nif (!sessionId) throw new Error('sessionId query parameter is required');\nif (!userId)    throw new Error('userId query parameter is required');\nreturn { sessionId, userId };"
+      },
+      "id": "5cce0324-f3ee-44e2-bef2-36998b6ec04f",
+      "name": "Extract Params",
+      "position": [176, -160],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT *\nFROM rubbercity_chat_message\nWHERE session_id = '{{ $json.sessionId }}'\n  AND user_id    = '{{ $json.userId }}'::uuid\nORDER BY id ASC;",
+        "options": {}
+      },
+      "id": "aadba430-045c-4bf2-ad27-cbea62bd7382",
+      "name": "Get History from DB",
+      "position": [400, -160],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": { "id": "REPLACE_ME_RUBBERCITY_DB", "name": "Rubbercity-DB" }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "113b5105-685f-486b-b43f-68a8b4cff6bf",
+      "name": "Return History",
+      "position": [624, -160],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When called - GET history": {
+      "main": [[{ "node": "Extract Params", "type": "main", "index": 0 }]]
+    },
+    "Extract Params": {
+      "main": [[{ "node": "Get History from DB", "type": "main", "index": 0 }]]
+    },
+    "Get History from DB": {
+      "main": [[{ "node": "Return History", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "e833a3dc-8510-4670-a614-a4b34b88f510",
+  "meta": { "templateCredsSetupCompleted": true },
+  "id": "RubbercityChatHistory",
+  "tags": []
+}

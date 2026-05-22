@@ -1,0 +1,523 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [1264, 1520],
+      "id": "1962a6fb-e6f1-4842-a0e3-72dab4b68603",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-mysql-orders",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e00d6ca0-5965-4a2a-b2ee-e38349b20843",
+      "name": "POST orders",
+      "position": [1696, 1360],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-orders"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "47cacf12-178b-4c67-9a21-d402b1971b30",
+      "name": "Respond orders",
+      "position": [2176, 1360],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-mysql-stock",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f2e0db42-996f-4ce3-bbd4-aaf1243b3029",
+      "name": "POST stock",
+      "position": [1696, 1568],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-stock"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT m.id_f, m.formulacao, m.mat, f.d1, f.d2, m.dt, m.saldo\n  FROM quimicadb.matprima m\n  LEFT JOIN quimicadb.formula f\n    ON f.id_f = m.id_f AND f.nf = 'X'\n WHERE m.saldo > 0\n   AND ({{ ($json.body && $json.body.formulacao) ? (\"m.formulacao = '\" + String($json.body.formulacao).replace(/'/g, '') + \"'\") : '1=1' }})\n   AND ({{ ($json.body && $json.body.mat) ? (\"UPPER(m.mat) LIKE '%\" + String($json.body.mat).toUpperCase().replace(/'/g, '') + \"%'\") : '1=1' }})\n ORDER BY m.dt DESC\n LIMIT 200;",
+        "options": {}
+      },
+      "id": "6b9dce2d-93ab-4f82-9ee8-dcdade9c850a",
+      "name": "MySQL: stock",
+      "position": [1936, 1568],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": {
+        "mySql": {
+          "id": "FF04F1TrxE8Jo2qP",
+          "name": "Rubbercity-producaodb"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "ee58d9a7-4e01-4c96-8230-18eae132a2de",
+      "name": "Respond stock",
+      "position": [2176, 1568],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-mysql-formula",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2540fd08-91f6-49e6-9838-1b98de336b84",
+      "name": "POST formula",
+      "position": [1696, 1760],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-formula"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n       id_f                                   AS codigo_formula,\n       formulacao                             AS formulacao,\n       mat                                    AS familia,\n       d1                                     AS dureza_min,\n       d2                                     AS dureza_max,\n       CONCAT(d1, '/', d2)                    AS faixa_dureza,\n       CONCAT(mat, ' ', d1, '/', d2)          AS descricao_curta,\n       -- aliases legados para compatibilidade com consumidores antigos\n       id_f                                   AS id_f,\n       mat                                    AS mat,\n       d1                                     AS d1,\n       d2                                     AS d2\n  FROM quimicadb.formula\n WHERE nf = 'X'\n   -- guarda: se nenhum filtro util foi enviado, nao retorna nada (evita devolver registro aleatorio)\n   AND ( '{{ String((($json.body && $json.body.mat) || '')).replace(/'/g, '') }}' <> ''\n         OR {{ parseInt((($json.body && $json.body.d1) || 0), 10) }} > 0\n         OR {{ parseInt((($json.body && $json.body.d2) || 0), 10) }} > 0\n         OR '{{ String((($json.body && $json.body.q) || '')).replace(/'/g, '') }}' <> ''\n         OR '{{ String((($json.body && $json.body.formulacao) || '')).replace(/'/g, '') }}' <> '' )\n   AND ( '{{ String((($json.body && $json.body.mat) || '')).replace(/'/g, '') }}' = ''\n         OR UPPER(mat) = UPPER('{{ String((($json.body && $json.body.mat) || '')).replace(/'/g, '') }}') )\n   AND ( {{ parseInt((($json.body && $json.body.d1) || 0), 10) }} = 0\n         OR d1 = {{ parseInt((($json.body && $json.body.d1) || 0), 10) }} )\n   AND ( {{ parseInt((($json.body && $json.body.d2) || 0), 10) }} = 0\n         OR d2 = {{ parseInt((($json.body && $json.body.d2) || 0), 10) }} )\n   AND ( '{{ String((($json.body && $json.body.formulacao) || '')).replace(/'/g, '') }}' = ''\n         OR UPPER(formulacao) = UPPER('{{ String((($json.body && $json.body.formulacao) || '')).replace(/'/g, '') }}') )\n   AND ( '{{ String((($json.body && $json.body.q) || '')).replace(/'/g, '') }}' = ''\n         OR UPPER(formulacao) LIKE UPPER('%{{ String((($json.body && $json.body.q) || '')).replace(/'/g, '') }}%')\n         OR UPPER(mat)        LIKE UPPER('%{{ String((($json.body && $json.body.q) || '')).replace(/'/g, '') }}%')\n         OR UPPER(CONCAT(mat,' ',d1,'/',d2)) LIKE UPPER('%{{ String((($json.body && $json.body.q) || '')).replace(/'/g, '') }}%') )\n ORDER BY mat ASC, d1 ASC, d2 ASC\n LIMIT {{ Math.max(1, Math.min(parseInt((($json.body && $json.body.limit) || (($json.body && ($json.body.q || $json.body.formulacao)) ? 50 : 1)), 10), 200)) }};",
+        "options": {}
+      },
+      "id": "48cc4907-2e12-47ae-82dc-8a73cb530052",
+      "name": "MySQL: formula",
+      "position": [1936, 1760],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": {
+        "mySql": {
+          "id": "i1sv56rOKtfwkswB",
+          "name": "Rubbercity-quimicadb"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "4b333778-760a-4f4a-a108-9553e94206fe",
+      "name": "Respond formula",
+      "position": [2176, 1760],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ped_mestre, pedido, status, puliq, mat, kt, d, da, cor, queima,\n       bl, bl_desba, blpr, blfim, usinagem, usinafinal, usi_ter, usi_stat\n  FROM producao\n WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n   AND (queima IS NULL OR queima = 'N')\n   AND ((usinagem IS NULL) OR usinagem != 'SIM' OR usinafinal = 'F')\n   AND ((usi_ter  IS NULL) OR usi_ter  != 'S'   OR usi_stat = 'F')\n   AND ( (bl IS NULL OR bl IN ('','N')) OR (blfim = 'F') OR (bl = 'S' AND bl_desba = 'S' AND blpr = 'S') )\n   AND (UPPER(mat) != 'RETIFICA')\n   AND ({{ ($json.body && $json.body.customer_filter) ? (\"UPPER(pedido) LIKE '%\" + String($json.body.customer_filter).toUpperCase().replace(/'/g, '') + \"%'\") : '1=1' }})\n   AND ({{ ($json.body && $json.body.family_filter) ? (\"UPPER(mat) LIKE '%\" + String($json.body.family_filter).toUpperCase().replace(/'/g, '') + \"%'\") : '1=1' }})\n ORDER BY pedido ASC\n LIMIT {{ Math.max(1, Math.min(parseInt((($json.body && $json.body.limit) || 100), 10), 500)) }};",
+        "options": {}
+      },
+      "id": "1089bc92-6895-46d2-af1d-2d095be870de",
+      "name": "MySQL: production orders1",
+      "position": [1936, 1360],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": {
+        "mySql": {
+          "id": "FF04F1TrxE8Jo2qP",
+          "name": "Rubbercity-producaodb"
+        }
+      },
+      "notes": "Credencial: host 45.185.0.14, port 3306, db producaodb, user senai-ia (read-only).\nSchema real: coluna de usinagem terceirizada chama-se usi_ter (com underscore), nao usiter como aparece no doc do Marcelo. Confirmado via SHOW COLUMNS FROM producaodb.producao LIKE 'usi%'."
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-mysql-orders-summary", "responseMode": "responseNode", "options": {} },
+      "id": "wh-orders-summary",
+      "name": "POST orders-summary",
+      "position": [1696, 1960],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-orders-summary"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT mat, d, da, NULLIF(TRIM(cor),'') AS cor, COALESCE(puliq,0) AS puliq,\n       ROUND(SUM(CAST(REPLACE(REPLACE(COALESCE(kt,'0'),',','.'),' ','') AS DECIMAL(12,3))),2) AS kt_total,\n       COUNT(*) AS qtd_pedidos,\n       GROUP_CONCAT(DISTINCT ped_mestre ORDER BY ped_mestre SEPARATOR ',') AS ped_mestres,\n       GROUP_CONCAT(DISTINCT idcli ORDER BY idcli SEPARATOR ',') AS idclis,\n       SUBSTRING_INDEX(GROUP_CONCAT(DISTINCT idcli ORDER BY idcli SEPARATOR ','),',',1) AS idcli_principal,\n       MIN(pedido) AS primeiro_pedido,\n       MAX(pedido) AS ultimo_pedido,\n       MAX(CASE WHEN UPPER(COALESCE(urgente,'N'))='S' THEN 1 ELSE 0 END) AS tem_urgente,\n       MAX(CASE WHEN bl='S' AND bl_desba='S' AND blpr='S' THEN 1 ELSE 0 END) AS tem_retorno_bal,\n       MIN(COALESCE(prazo, dt_entrega)) AS sla_min,\n       MIN(dt_entra) AS dt_entra_min,\n       DATEDIFF(MIN(COALESCE(prazo, dt_entrega)), CURDATE()) AS dias_sla,\n       DATEDIFF(CURDATE(), MIN(dt_entra)) AS dias_em_casa\n  FROM producao\n WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n   AND (queima IS NULL OR queima IN ('N',''))\n   AND ((usinagem IS NULL) OR usinagem NOT IN ('SIM') OR usinafinal = 'F')\n   AND ((usi_ter IS NULL) OR usi_ter != 'S' OR usi_stat = 'F')\n   AND ( (bl IS NULL OR bl IN ('','N')) OR blfim = 'F' OR (bl = 'S' AND bl_desba = 'S' AND blpr = 'S') )\n   AND UPPER(mat) != 'RETIFICA'\n   AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL {{ Math.max(30, Math.min(parseInt((($json.body && $json.body.max_age_days) || 365), 10), 3650)) }} DAY))\n   AND ({{ ($json.body && $json.body.customer_filter) ? (\"(UPPER(pedido) LIKE '%\" + String($json.body.customer_filter).toUpperCase().replace(/'/g, '') + \"%' OR idcli = '\" + String($json.body.customer_filter).replace(/'/g, '') + \"')\") : '1=1' }})\n   AND ({{ ($json.body && $json.body.family_filter) ? (\"UPPER(mat) LIKE '%\" + String($json.body.family_filter).toUpperCase().replace(/'/g, '') + \"%'\") : '1=1' }})\n GROUP BY mat, d, da, NULLIF(TRIM(cor),''), COALESCE(puliq,0)\n ORDER BY tem_urgente DESC, tem_retorno_bal DESC, COALESCE(dias_sla,9999) ASC, kt_total DESC\n LIMIT 100;",
+        "options": {}
+      },
+      "id": "q-orders-summary",
+      "name": "MySQL: orders-summary",
+      "position": [1936, 1960],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": { "mySql": { "id": "FF04F1TrxE8Jo2qP", "name": "Rubbercity-producaodb" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-orders-summary",
+      "name": "Respond orders-summary",
+      "position": [2176, 1960],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-mysql-orders-detail", "responseMode": "responseNode", "options": {} },
+      "id": "wh-orders-detail",
+      "name": "POST orders-detail",
+      "position": [1696, 2120],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-orders-detail"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ped_mestre, pedido, status, puliq, mat, kt, d, da, cor, kgg, eixo,\n       idcli, mat_cli,\n       urgente, prazo, dt_entrega, dt_entra, dataped,\n       queima, bl, bl_desba, blpr, blfim, usinagem, usinafinal, usi_ter, usi_stat,\n       obsped, dc_obs,\n       DATEDIFF(COALESCE(prazo, dt_entrega), CURDATE()) AS dias_sla,\n       DATEDIFF(CURDATE(), dt_entra) AS dias_em_casa,\n       CASE WHEN UPPER(COALESCE(urgente,'N'))='S' THEN 1 ELSE 0 END AS flag_urgente,\n       CASE WHEN bl='S' AND bl_desba='S' AND blpr='S' THEN 1 ELSE 0 END AS flag_retorno_bal\n  FROM producao\n WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n   AND (queima IS NULL OR queima IN ('N',''))\n   AND ((usinagem IS NULL) OR usinagem NOT IN ('SIM') OR usinafinal = 'F')\n   AND ((usi_ter IS NULL) OR usi_ter != 'S' OR usi_stat = 'F')\n   AND ( (bl IS NULL OR bl IN ('','N')) OR blfim = 'F' OR (bl = 'S' AND bl_desba = 'S' AND blpr = 'S') )\n   AND UPPER(mat) != 'RETIFICA'\n   AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL {{ Math.max(30, Math.min(parseInt((($json.body && $json.body.max_age_days) || 365), 10), 3650)) }} DAY))\n   AND UPPER(mat) = UPPER('{{ String((($json.body && $json.body.mat) || '')).replace(/'/g, '') }}')\n   AND d  = {{ parseInt((($json.body && $json.body.d) || 0), 10) }}\n   AND ( {{ parseInt((($json.body && $json.body.da) || 0), 10) }} = 0 OR da = {{ parseInt((($json.body && $json.body.da) || 0), 10) }} )\n   AND ({{ ($json.body && $json.body.cor) ? (\"UPPER(NULLIF(TRIM(cor),'')) = UPPER('\" + String($json.body.cor).replace(/'/g, '') + \"')\") : '1=1' }})\n ORDER BY flag_urgente DESC, flag_retorno_bal DESC, COALESCE(DATEDIFF(COALESCE(prazo, dt_entrega), CURDATE()),9999) ASC, pedido ASC\n LIMIT 500;",
+        "options": {}
+      },
+      "id": "q-orders-detail",
+      "name": "MySQL: orders-detail",
+      "position": [1936, 2120],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": { "mySql": { "id": "FF04F1TrxE8Jo2qP", "name": "Rubbercity-producaodb" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-orders-detail",
+      "name": "Respond orders-detail",
+      "position": [2176, 2120],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-mysql-orders-blocked", "responseMode": "responseNode", "options": {} },
+      "id": "wh-orders-blocked",
+      "name": "POST orders-blocked",
+      "position": [1696, 2280],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-orders-blocked"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ped_mestre, pedido, status, puliq, mat, kt, d, da, cor,\n       idcli, mat_cli, urgente, prazo, dt_entrega, dt_entra,\n       queima, bl, bl_desba, blpr, blfim, usinagem, usinafinal, usi_ter, usi_stat,\n       DATEDIFF(COALESCE(prazo, dt_entrega), CURDATE()) AS dias_sla,\n       DATEDIFF(CURDATE(), dt_entra) AS dias_em_casa,\n       CONCAT_WS(' | ',\n         CASE WHEN queima = 'S' THEN 'queima_pendente' END,\n         CASE WHEN usinagem = 'SIM' AND (usinafinal IS NULL OR usinafinal != 'F') THEN 'usinagem_pendente' END,\n         CASE WHEN usi_ter  = 'S'   AND (usi_stat   IS NULL OR usi_stat   != 'F') THEN 'usiterceirizada_pendente' END,\n         CASE WHEN bl = 'S' AND NOT (bl_desba = 'S' AND blpr = 'S') AND (blfim IS NULL OR blfim != 'F') THEN 'balanceamento_pendente' END,\n         CASE WHEN UPPER(mat) = 'RETIFICA' THEN 'retifica_pura' END\n       ) AS motivos\n  FROM producao\n WHERE status IN ('LIMPEZA','LIMPEZAI','JATO','ENDS')\n   AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL {{ Math.max(30, Math.min(parseInt((($json.body && $json.body.max_age_days) || 365), 10), 3650)) }} DAY))\n   AND (\n        queima = 'S'\n     OR (usinagem = 'SIM' AND (usinafinal IS NULL OR usinafinal != 'F'))\n     OR (usi_ter  = 'S'   AND (usi_stat   IS NULL OR usi_stat   != 'F'))\n     OR (bl = 'S' AND NOT (bl_desba = 'S' AND blpr = 'S') AND (blfim IS NULL OR blfim != 'F'))\n     OR UPPER(mat) = 'RETIFICA'\n   )\n ORDER BY COALESCE(DATEDIFF(COALESCE(prazo, dt_entrega), CURDATE()),9999) ASC, pedido ASC\n LIMIT {{ Math.max(1, Math.min(parseInt((($json.body && $json.body.limit) || 200), 10), 500)) }};",
+        "options": {}
+      },
+      "id": "q-orders-blocked",
+      "name": "MySQL: orders-blocked",
+      "position": [1936, 2280],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": { "mySql": { "id": "FF04F1TrxE8Jo2qP", "name": "Rubbercity-producaodb" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-orders-blocked",
+      "name": "Respond orders-blocked",
+      "position": [2176, 2280],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-mysql-stock-summary", "responseMode": "responseNode", "options": {} },
+      "id": "wh-stock-summary",
+      "name": "POST stock-summary",
+      "position": [1696, 2440],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-stock-summary"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH latest AS (\n  SELECT formulacao, MAX(dt) AS max_dt\n    FROM quimicadb.matprima\n   WHERE CAST(REPLACE(REPLACE(COALESCE(saldo,'0'),',','.'),' ','') AS DECIMAL(12,3)) > 0\n   GROUP BY formulacao\n),\nprod_cores AS (\n  SELECT UPPER(mat) AS mat_u, d, da,\n         CASE WHEN COUNT(DISTINCT UPPER(TRIM(cor)))=1 THEN MAX(UPPER(TRIM(cor))) ELSE NULL END AS cor_unica,\n         GROUP_CONCAT(DISTINCT UPPER(TRIM(cor)) ORDER BY cor SEPARATOR ',') AS cores_vistas\n    FROM producaodb.producao\n   WHERE cor IS NOT NULL AND TRIM(cor) <> ''\n     AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL 730 DAY))\n   GROUP BY UPPER(mat), d, da\n)\nSELECT m.formulacao,\n       MAX(m.mat)   AS mat,\n       MAX(f.d1)    AS d1,\n       MAX(f.d2)    AS d2,\n       MAX(pc.cor_unica)   AS cor,\n       MAX(pc.cores_vistas) AS cores_vistas,\n       ROUND(SUM(CAST(REPLACE(REPLACE(COALESCE(m.saldo,'0'),',','.'),' ','') AS DECIMAL(12,3))),2) AS saldo_total,\n       MAX(m.dt)    AS dt_ultimo,\n       MIN(m.dt)    AS dt_mais_antigo,\n       DATEDIFF(CURDATE(), MIN(m.dt)) AS dias_em_estoque,\n       COUNT(*)     AS qtd_lotes\n  FROM quimicadb.matprima m\n  INNER JOIN latest\n    ON latest.formulacao = m.formulacao\n   AND m.dt = latest.max_dt\n  LEFT JOIN quimicadb.formula f ON f.id_f = m.id_f AND f.nf = 'X'\n  LEFT JOIN prod_cores pc ON pc.mat_u = UPPER(m.mat) AND pc.d = f.d1 AND pc.da = f.d2\n WHERE CAST(REPLACE(REPLACE(COALESCE(m.saldo,'0'),',','.'),' ','') AS DECIMAL(12,3)) > 0\n   AND ({{ ($json.body && $json.body.mat) ? (\"UPPER(m.mat) LIKE '%\" + String($json.body.mat).toUpperCase().replace(/'/g, '') + \"%'\") : '1=1' }})\n GROUP BY m.formulacao\n ORDER BY saldo_total DESC\n LIMIT 300;",
+        "options": {}
+      },
+      "id": "q-stock-summary",
+      "name": "MySQL: stock-summary",
+      "position": [1936, 2440],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": { "mySql": { "id": "FF04F1TrxE8Jo2qP", "name": "Rubbercity-producaodb" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-stock-summary",
+      "name": "Respond stock-summary",
+      "position": [2176, 2440],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": { "httpMethod": "GET", "path": "rubbercity-mysql-kpis", "responseMode": "responseNode", "options": {} },
+      "id": "wh-kpis",
+      "name": "GET kpis",
+      "position": [1696, 2600],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-kpis"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT COUNT(*) FROM producao\n     WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n       AND (queima IS NULL OR queima IN ('N',''))\n       AND ((usinagem IS NULL) OR usinagem NOT IN ('SIM') OR usinafinal = 'F')\n       AND ((usi_ter IS NULL) OR usi_ter != 'S' OR usi_stat = 'F')\n       AND ( (bl IS NULL OR bl IN ('','N')) OR blfim = 'F' OR (bl = 'S' AND bl_desba = 'S' AND blpr = 'S') )\n       AND UPPER(mat) != 'RETIFICA'\n       AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL 365 DAY))) AS pedidos_elegiveis,\n  (SELECT COUNT(DISTINCT CONCAT(mat,'-',d,'-',da,'-',COALESCE(NULLIF(TRIM(cor),''),''),'-',COALESCE(puliq,0))) FROM producao\n     WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n       AND (queima IS NULL OR queima IN ('N',''))\n       AND ((usinagem IS NULL) OR usinagem NOT IN ('SIM') OR usinafinal = 'F')\n       AND ((usi_ter IS NULL) OR usi_ter != 'S' OR usi_stat = 'F')\n       AND ( (bl IS NULL OR bl IN ('','N')) OR blfim = 'F' OR (bl = 'S' AND bl_desba = 'S' AND blpr = 'S') )\n       AND UPPER(mat) != 'RETIFICA'\n       AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL 365 DAY))) AS formulacoes_distintas,\n  (SELECT COALESCE(SUM(CAST(REPLACE(REPLACE(COALESCE(kt,'0'),',','.'),' ','') AS DECIMAL(12,3))),0) FROM producao\n     WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n       AND (queima IS NULL OR queima IN ('N',''))\n       AND ((usinagem IS NULL) OR usinagem NOT IN ('SIM') OR usinafinal = 'F')\n       AND ((usi_ter IS NULL) OR usi_ter != 'S' OR usi_stat = 'F')\n       AND ( (bl IS NULL OR bl IN ('','N')) OR blfim = 'F' OR (bl = 'S' AND bl_desba = 'S' AND blpr = 'S') )\n       AND UPPER(mat) != 'RETIFICA'\n       AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL 365 DAY))) AS kg_total,\n  (SELECT COUNT(*) FROM producao\n     WHERE status IN ('LIMPEZA','LIMPEZAI','JATO','ENDS')\n       AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL 365 DAY))\n       AND (\n            queima = 'S'\n         OR (usinagem = 'SIM' AND (usinafinal IS NULL OR usinafinal != 'F'))\n         OR (usi_ter  = 'S'   AND (usi_stat   IS NULL OR usi_stat   != 'F'))\n         OR (bl = 'S' AND NOT (bl_desba = 'S' AND blpr = 'S') AND (blfim IS NULL OR blfim != 'F'))\n         OR UPPER(mat) = 'RETIFICA'\n       )) AS bloqueados,\n  (SELECT COUNT(*) FROM producao\n     WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n       AND UPPER(COALESCE(urgente,'N')) = 'S'\n       AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL 365 DAY))) AS urgentes,\n  (SELECT COUNT(*) FROM producao\n     WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n       AND (queima IS NULL OR queima IN ('N',''))\n       AND ((usinagem IS NULL) OR usinagem NOT IN ('SIM') OR usinafinal = 'F')\n       AND ((usi_ter IS NULL) OR usi_ter != 'S' OR usi_stat = 'F')\n       AND ( (bl IS NULL OR bl IN ('','N')) OR blfim = 'F' OR (bl = 'S' AND bl_desba = 'S' AND blpr = 'S') )\n       AND UPPER(mat) != 'RETIFICA'\n       AND COALESCE(prazo, dt_entrega) < CURDATE()\n       AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL 365 DAY))) AS atrasados,\n  (SELECT COUNT(*) FROM producao\n     WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n       AND bl='S' AND bl_desba='S' AND blpr='S'\n       AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL 365 DAY))) AS retorno_bal,\n  NOW() AS gerado_em;",
+        "options": {}
+      },
+      "id": "q-kpis",
+      "name": "MySQL: kpis",
+      "position": [1936, 2600],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": { "mySql": { "id": "FF04F1TrxE8Jo2qP", "name": "Rubbercity-producaodb" } }
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-kpis",
+      "name": "Respond kpis",
+      "position": [2176, 2600],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-mysql-ofm-decisions", "responseMode": "responseNode", "options": {} },
+      "id": "wh-ofm-decisions",
+      "name": "POST ofm-decisions",
+      "position": [1696, 2760],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-ofm-decisions"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT producao_mat, formula_mat FROM rubbercity_family_alias;",
+        "options": {}
+      },
+      "id": "pg-aliases-ofm",
+      "name": "Get family aliases (ofm)",
+      "position": [1816, 2760],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": { "id": "jFjeYH6Nt3aRNkoM", "name": "Supabase_database" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT band_code, band_min, band_max FROM rubbercity_durometer_band ORDER BY band_min ASC;",
+        "options": {}
+      },
+      "id": "pg-bands-ofm",
+      "name": "Get durometer bands (ofm)",
+      "position": [1936, 2760],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": { "id": "jFjeYH6Nt3aRNkoM", "name": "Supabase_database" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH grouped AS (\n  SELECT mat, d, da, NULLIF(TRIM(cor),'') AS cor, COALESCE(puliq,0) AS puliq,\n         ROUND(SUM(CAST(REPLACE(REPLACE(COALESCE(kt,'0'),',','.'),' ','') AS DECIMAL(12,3))),2) AS kt_total,\n         COUNT(*) AS qtd_pedidos,\n         GROUP_CONCAT(DISTINCT ped_mestre ORDER BY ped_mestre SEPARATOR ',') AS ped_mestres,\n         GROUP_CONCAT(DISTINCT idcli ORDER BY idcli SEPARATOR ',') AS idclis,\n         SUBSTRING_INDEX(GROUP_CONCAT(DISTINCT idcli ORDER BY idcli SEPARATOR ','),',',1) AS idcli_principal,\n         MIN(pedido) AS primeiro_pedido,\n         MAX(pedido) AS ultimo_pedido,\n         MAX(CASE WHEN UPPER(COALESCE(urgente,'N'))='S' THEN 1 ELSE 0 END) AS tem_urgente,\n         MAX(CASE WHEN bl='S' AND bl_desba='S' AND blpr='S' THEN 1 ELSE 0 END) AS tem_retorno_bal,\n         MIN(COALESCE(prazo, dt_entrega)) AS sla_min,\n         MIN(prazo) AS prazo_min,\n         MIN(dt_entrega) AS dt_entrega_min,\n         MIN(dt_entra) AS dt_entra_min\n    FROM producao\n   WHERE status IN ('LIMPEZA','LIMPEZAI','JATO')\n     AND (queima IS NULL OR queima IN ('N',''))\n     AND ((usinagem IS NULL) OR usinagem NOT IN ('SIM') OR usinafinal = 'F')\n     AND ((usi_ter IS NULL) OR usi_ter != 'S' OR usi_stat = 'F')\n     AND ( (bl IS NULL OR bl IN ('','N')) OR blfim = 'F' OR (bl = 'S' AND bl_desba = 'S' AND blpr = 'S') )\n     AND UPPER(mat) != 'RETIFICA'\n     AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL {{ Math.max(30, Math.min(parseInt((($json.body && $json.body.max_age_days) || 365), 10), 3650)) }} DAY))\n     AND ({{ ($json.body && $json.body.customer_filter) ? (\"(UPPER(pedido) LIKE '%\" + String($json.body.customer_filter).toUpperCase().replace(/'/g, '') + \"%' OR idcli = '\" + String($json.body.customer_filter).replace(/'/g, '') + \"')\") : '1=1' }})\n     AND ({{ ($json.body && $json.body.family_filter) ? (\"UPPER(mat) LIKE '%\" + String($json.body.family_filter).toUpperCase().replace(/'/g, '') + \"%'\") : '1=1' }})\n   GROUP BY mat, d, da, NULLIF(TRIM(cor),''), COALESCE(puliq,0)\n),\nstock_latest AS (\n  SELECT m.formulacao,\n         ROUND(SUM(CAST(REPLACE(REPLACE(COALESCE(m.saldo,'0'),',','.'),' ','') AS DECIMAL(12,3))),2) AS saldo_total\n    FROM quimicadb.matprima m\n    INNER JOIN (\n      SELECT formulacao, MAX(dt) AS max_dt\n        FROM quimicadb.matprima\n       WHERE CAST(REPLACE(REPLACE(COALESCE(saldo,'0'),',','.'),' ','') AS DECIMAL(12,3)) > 0\n       GROUP BY formulacao\n    ) latest ON latest.formulacao = m.formulacao AND m.dt = latest.max_dt\n   WHERE CAST(REPLACE(REPLACE(COALESCE(m.saldo,'0'),',','.'),' ','') AS DECIMAL(12,3)) > 0\n   GROUP BY m.formulacao\n),\nmatches AS (\n  SELECT g.mat AS g_mat, g.d AS g_d, g.da AS g_da, g.cor AS g_cor, g.puliq AS g_puliq,\n         ff.id_f, ff.formulacao,\n         ROW_NUMBER() OVER (\n           PARTITION BY g.mat, g.d, g.da, g.cor, g.puliq\n           ORDER BY (ff.d1 = g.d AND ff.d2 = g.da) DESC,\n                    (ff.d1 = g.d) DESC,\n                    ABS(ff.d1 - g.d) ASC,\n                    ABS(COALESCE(ff.d2, ff.d1) - COALESCE(NULLIF(g.da,0), g.d)) ASC,\n                    ff.d2 ASC,\n                    ff.id_f ASC\n         ) AS rn\n    FROM grouped g\n    JOIN quimicadb.formula ff\n      ON ff.nf = 'X'\n     AND UPPER(ff.mat) = (CASE WHEN 1=0 THEN '' {{ ($('Get family aliases (ofm)').all() || []).map(i => \"WHEN UPPER('\" + String(i.json.producao_mat || '').replace(/'/g, '') + \"')=UPPER(g.mat) THEN UPPER('\" + String(i.json.formula_mat || '').replace(/'/g, '') + \"')\").join(' ') }} ELSE UPPER(g.mat) END)\n     AND ff.d1 BETWEEN ({{ ((b)=>b.length?'CASE '+b.map(x=>'WHEN g.d BETWEEN '+x.json.band_min+' AND '+x.json.band_max+' AND (g.da IS NULL OR g.da=0 OR g.da BETWEEN '+x.json.band_min+' AND '+x.json.band_max+') THEN '+x.json.band_min).join(' ')+' ELSE g.d END':'g.d')($('Get durometer bands (ofm)').all()||[]) }}) AND ({{ ((b)=>b.length?'CASE '+b.map(x=>'WHEN g.d BETWEEN '+x.json.band_min+' AND '+x.json.band_max+' AND (g.da IS NULL OR g.da=0 OR g.da BETWEEN '+x.json.band_min+' AND '+x.json.band_max+') THEN '+x.json.band_max).join(' ')+' ELSE COALESCE(NULLIF(g.da,0),g.d) END':'COALESCE(NULLIF(g.da,0),g.d)')($('Get durometer bands (ofm)').all()||[]) }})\n     AND (\n       g.da IS NULL\n       OR g.da = 0\n       OR ff.d2 IS NULL\n       OR ff.d2 BETWEEN ({{ ((b)=>b.length?'CASE '+b.map(x=>'WHEN g.d BETWEEN '+x.json.band_min+' AND '+x.json.band_max+' AND (g.da IS NULL OR g.da=0 OR g.da BETWEEN '+x.json.band_min+' AND '+x.json.band_max+') THEN '+x.json.band_min).join(' ')+' ELSE g.d END':'g.d')($('Get durometer bands (ofm)').all()||[]) }}) AND ({{ ((b)=>b.length?'CASE '+b.map(x=>'WHEN g.d BETWEEN '+x.json.band_min+' AND '+x.json.band_max+' AND (g.da IS NULL OR g.da=0 OR g.da BETWEEN '+x.json.band_min+' AND '+x.json.band_max+') THEN '+x.json.band_max).join(' ')+' ELSE COALESCE(NULLIF(g.da,0),g.d) END':'COALESCE(NULLIF(g.da,0),g.d)')($('Get durometer bands (ofm)').all()||[]) }})\n     )\n),\nenriched AS (\n  SELECT g.*,\n         f.id_f AS codigo_formula,\n         f.formulacao AS formulacao_oficial,\n         COALESCE(s.saldo_total, 0) AS saldo_estoque,\n         CASE\n           WHEN UPPER(g.mat)='AG' AND g.d=20 AND g.da=25 AND UPPER(g.cor)='PRETA' THEN 90\n           WHEN UPPER(g.mat)='AG' AND g.d=25 AND g.da=28 AND UPPER(g.cor)='PRETA' THEN 90\n           WHEN UPPER(g.mat)='AG' AND g.d=30 AND g.da=33 AND UPPER(g.cor)='PRETA' THEN 90\n           WHEN UPPER(g.mat)='AG' AND g.d=35 AND g.da=40 AND UPPER(g.cor)='PRETA' THEN 30\n           ELSE 0\n         END AS piso_estoque,\n         CASE WHEN g.da IS NOT NULL AND g.da >= 60 THEN 0.08 ELSE 0.07 END AS margem,\n         DATEDIFF(g.sla_min, CURDATE()) AS dias_sla,\n         DATEDIFF(CURDATE(), g.dt_entra_min) AS dias_em_casa\n    FROM grouped g\n    LEFT JOIN matches f\n      ON f.rn = 1\n     AND f.g_mat <=> g.mat\n     AND f.g_d  <=> g.d\n     AND f.g_da <=> g.da\n     AND f.g_cor <=> g.cor\n     AND f.g_puliq <=> g.puliq\n    LEFT JOIN stock_latest s ON s.formulacao = f.formulacao\n),\nfinal AS (\n  SELECT *,\n         GREATEST(saldo_estoque - piso_estoque, 0) AS saldo_disponivel,\n         ROUND(kt_total * (1 + margem), 1) AS kg_necessario,\n         CASE\n           WHEN tem_urgente = 1 THEN 'URGENTE'\n           WHEN sla_min IS NULL THEN CASE WHEN tem_retorno_bal = 1 THEN 'RETORNO_BAL' ELSE 'SEM_SLA' END\n           WHEN DATEDIFF(sla_min, CURDATE()) < 0 THEN 'ATRASADO'\n           WHEN tem_retorno_bal = 1 THEN 'RETORNO_BAL'\n           WHEN DATEDIFF(sla_min, CURDATE()) <= 3 THEN 'SLA_3D'\n           WHEN DATEDIFF(sla_min, CURDATE()) <= 7 THEN 'SLA_7D'\n           ELSE 'NORMAL'\n         END AS prioridade,\n         CASE\n           WHEN formulacao_oficial IS NULL THEN 'pendente'\n           WHEN kt_total IS NULL OR kt_total <= 0 THEN 'pendente'\n           WHEN GREATEST(saldo_estoque - piso_estoque, 0) >= kt_total * (1 + margem) THEN 'consumir'\n           ELSE 'criar'\n         END AS decisao\n    FROM enriched\n)\nSELECT mat, d, da, cor, puliq, kt_total, qtd_pedidos, ped_mestres, idclis, idcli_principal,\n       primeiro_pedido, ultimo_pedido, sla_min, prazo_min, dt_entrega_min,\n       dt_entra_min, dias_sla, dias_em_casa, tem_urgente, tem_retorno_bal,\n       codigo_formula, formulacao_oficial, saldo_estoque, piso_estoque, margem,\n       saldo_disponivel, kg_necessario,\n       CASE decisao\n         WHEN 'criar' THEN ROUND(GREATEST(kg_necessario - saldo_disponivel, kg_necessario), 1)\n         ELSE 0\n       END AS kg_ofm_sugerido,\n       decisao,\n       prioridade,\n       CASE\n         WHEN decisao = 'pendente' AND formulacao_oficial IS NULL\n           THEN CONCAT('Sem formula oficial em quimicadb.formula compativel com mat=', mat, ', d=', d, ', da=', COALESCE(da,0), ' (nf=X, considerando as faixas oficiais de dureza). Verifique a faixa do pedido ou cadastre alias em rubbercity_durometer_alias â€” use lookup_formula para conferir.')\n         WHEN decisao = 'pendente'\n           THEN 'kt_total zerado no ERP â€” validar peso antes de gerar OFM.'\n         ELSE NULL\n       END AS motivo_pendente,\n       CONCAT(\n         'Necessario: ', ROUND(kt_total,1), ' kg x (1+', ROUND(margem*100), '%) = ', ROUND(kg_necessario,1), ' kg. ',\n         'Saldo: ', ROUND(saldo_estoque,1), ' kg',\n         CASE WHEN piso_estoque > 0 THEN CONCAT(' (piso ', piso_estoque, ' kg -> disponivel ', ROUND(saldo_disponivel,1), ' kg)') ELSE '' END,\n         '. ',\n         CASE decisao\n           WHEN 'consumir' THEN 'Saldo cobre a necessidade -> consumir estoque, sem OFM.'\n           WHEN 'criar'    THEN CONCAT('Saldo cobre ', ROUND(saldo_disponivel,1), ' kg; faltam ', ROUND(GREATEST(kg_necessario - saldo_disponivel, 0),1), ' kg -> criar OFM.')\n           WHEN 'pendente' THEN 'Falta dado critico â€” ver motivo ao lado.'\n         END,\n         CASE\n           WHEN dias_sla IS NULL THEN ' Sem prazo no ERP.'\n           WHEN dias_sla < 0 THEN CONCAT(' SLA estourado ha ', ABS(dias_sla), ' dia(s).')\n           ELSE CONCAT(' SLA em ', dias_sla, ' dia(s).')\n         END,\n         CASE WHEN tem_urgente = 1 THEN ' [URGENTE]' ELSE '' END,\n         CASE WHEN tem_retorno_bal = 1 THEN ' [retorno balanceamento -> JATO]' ELSE '' END,\n         CASE WHEN dt_entra_min IS NOT NULL THEN CONCAT(' Rolo mais antigo: ', DATE_FORMAT(dt_entra_min,'%d/%m/%Y'), ' (', dias_em_casa, ' dia(s) em casa).') ELSE '' END\n       ) AS como_calculado\n  FROM final\n ORDER BY\n   FIELD(prioridade,'URGENTE','ATRASADO','RETORNO_BAL','SLA_3D','SLA_7D','NORMAL','SEM_SLA'),\n   FIELD(decisao,'criar','consumir','pendente'),\n   COALESCE(dias_sla, 9999) ASC,\n   kt_total DESC\n LIMIT 200;",
+        "options": {}
+      },
+      "id": "q-ofm-decisions",
+      "name": "MySQL: ofm-decisions",
+      "position": [2056, 2760],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": { "mySql": { "id": "FF04F1TrxE8Jo2qP", "name": "Rubbercity-producaodb" } },
+      "notes": "v2 â€” soma kt convertendo vÃ­rgulaâ†’ponto; SLA prioridade via prazo/dt_entrega/dt_entra; idcli; filtro de idade 365d configurÃ¡vel; tipo_bal; match de fÃ³rmula com fallback para da vazio."
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-ofm-decisions",
+      "name": "Respond ofm-decisions",
+      "position": [2296, 2760],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "rubbercity-mysql-stock-orphan", "responseMode": "responseNode", "options": {} },
+      "id": "wh-stock-orphan",
+      "name": "POST stock-orphan",
+      "position": [1696, 2920],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "rbct-mysql-stock-orphan"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT producao_mat, formula_mat FROM rubbercity_family_alias;",
+        "options": {}
+      },
+      "id": "pg-aliases-orphan",
+      "name": "Get family aliases (orphan)",
+      "position": [1816, 2920],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": { "id": "jFjeYH6Nt3aRNkoM", "name": "Supabase_database" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH latest AS (\n  SELECT formulacao, MAX(dt) AS max_dt, MIN(dt) AS min_dt\n    FROM quimicadb.matprima\n   WHERE CAST(REPLACE(REPLACE(COALESCE(saldo,'0'),',','.'),' ','') AS DECIMAL(12,3)) > 0\n   GROUP BY formulacao\n),\nprod_cores AS (\n  SELECT UPPER(mat) AS mat_u, d, da,\n         CASE WHEN COUNT(DISTINCT UPPER(TRIM(cor)))=1 THEN MAX(UPPER(TRIM(cor))) ELSE NULL END AS cor_unica,\n         GROUP_CONCAT(DISTINCT UPPER(TRIM(cor)) ORDER BY cor SEPARATOR ',') AS cores_vistas\n    FROM producaodb.producao\n   WHERE cor IS NOT NULL AND TRIM(cor) <> ''\n     AND (dt_entra IS NULL OR dt_entra >= DATE_SUB(CURDATE(), INTERVAL 730 DAY))\n   GROUP BY UPPER(mat), d, da\n),\ndemanda_match AS (\n  SELECT f.formulacao,\n         GROUP_CONCAT(DISTINCT p.pedido ORDER BY p.pedido SEPARATOR ',') AS pedidos_sample,\n         GROUP_CONCAT(DISTINCT CONCAT(p.mat,' ',p.d,'/',COALESCE(p.da,0),' ',COALESCE(NULLIF(TRIM(p.cor),''),'-')) ORDER BY p.mat SEPARATOR ' | ') AS combinacoes_sample,\n         COUNT(*) AS pedidos_match\n    FROM producaodb.producao p\n    JOIN quimicadb.formula f\n      ON f.id_f = (\n        SELECT ff.id_f FROM quimicadb.formula ff\n         WHERE ff.nf = 'X'\n           AND UPPER(ff.mat) = (CASE WHEN 1=0 THEN '' {{ ($('Get family aliases (orphan)').all() || []).map(i => \"WHEN UPPER('\" + String(i.json.producao_mat || '').replace(/'/g, '') + \"')=UPPER(p.mat) THEN UPPER('\" + String(i.json.formula_mat || '').replace(/'/g, '') + \"')\").join(' ') }} ELSE UPPER(p.mat) END)\n           AND ff.d1 = p.d\n           AND (\n             ff.d2 = p.da\n             OR p.da IS NULL\n             OR p.da = 0\n           )\n         ORDER BY (ff.d2 = p.da) DESC,\n                  ABS(COALESCE(ff.d2, ff.d1) - COALESCE(NULLIF(p.da,0), p.d)) ASC,\n                  ff.d2 ASC\n         LIMIT 1\n      )\n   WHERE p.status IN ('LIMPEZA','LIMPEZAI','JATO')\n     AND (p.queima IS NULL OR p.queima IN ('N',''))\n     AND ((p.usinagem IS NULL) OR p.usinagem NOT IN ('SIM') OR p.usinafinal = 'F')\n     AND ((p.usi_ter IS NULL) OR p.usi_ter != 'S' OR p.usi_stat = 'F')\n     AND ( (p.bl IS NULL OR p.bl IN ('','N')) OR p.blfim = 'F' OR (p.bl = 'S' AND p.bl_desba = 'S' AND p.blpr = 'S') )\n     AND UPPER(p.mat) != 'RETIFICA'\n     AND (p.dt_entra IS NULL OR p.dt_entra >= DATE_SUB(CURDATE(), INTERVAL {{ Math.max(30, Math.min(parseInt((($json.body && $json.body.max_age_days) || 365), 10), 3650)) }} DAY))\n   GROUP BY f.formulacao\n)\nSELECT m.formulacao,\n       MAX(m.mat) AS mat,\n       MAX(f.d1)  AS d1,\n       MAX(f.d2)  AS d2,\n       MAX(pc.cor_unica)   AS cor,\n       MAX(pc.cores_vistas) AS cores_vistas,\n       ROUND(SUM(CAST(REPLACE(REPLACE(COALESCE(m.saldo,'0'),',','.'),' ','') AS DECIMAL(12,3))),2) AS saldo_kg,\n       MAX(l.max_dt) AS dt_ultimo,\n       MIN(l.min_dt) AS dt_mais_antigo,\n       DATEDIFF(CURDATE(), MIN(l.min_dt)) AS dias_em_estoque,\n       COUNT(*) AS qtd_lotes,\n       CASE WHEN dm.formulacao IS NULL THEN 0 ELSE 1 END AS tem_demanda,\n       dm.pedidos_match    AS pedidos_match,\n       dm.pedidos_sample   AS pedidos_sample,\n       dm.combinacoes_sample AS combinacoes_sample\n  FROM quimicadb.matprima m\n  JOIN latest l ON l.formulacao = m.formulacao AND m.dt = l.max_dt\n  LEFT JOIN quimicadb.formula f ON f.id_f = m.id_f AND f.nf = 'X'\n  LEFT JOIN prod_cores pc ON pc.mat_u = UPPER(m.mat) AND pc.d = f.d1 AND pc.da = f.d2\n  LEFT JOIN demanda_match dm ON dm.formulacao = m.formulacao\n WHERE CAST(REPLACE(REPLACE(COALESCE(m.saldo,'0'),',','.'),' ','') AS DECIMAL(12,3)) > 0\n   AND ( {{ (($json.body && parseInt($json.body.debug,10)) || 0) }} = 1 OR dm.formulacao IS NULL )\n GROUP BY m.formulacao, dm.formulacao, dm.pedidos_match, dm.pedidos_sample, dm.combinacoes_sample\n ORDER BY tem_demanda ASC, saldo_kg DESC\n LIMIT {{ Math.max(1, Math.min(parseInt((($json.body && $json.body.limit) || 200), 10), 1000)) }};",
+        "options": {}
+      },
+      "id": "q-stock-orphan",
+      "name": "MySQL: stock-orphan",
+      "position": [1936, 2920],
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "credentials": { "mySql": { "id": "FF04F1TrxE8Jo2qP", "name": "Rubbercity-producaodb" } },
+      "notes": "Massa parada: formulaÃ§Ãµes com saldo > 0 que nÃ£o aparecem como demanda elegÃ­vel.\nDebug: envie {\"debug\":1} no body para retornar TODAS as formulaÃ§Ãµes com saldo, com flag tem_demanda (0/1), pedidos_match (qtd), pedidos_sample e combinacoes_sample (mat d/da cor) â€” Ãºtil para diagnosticar por que algo Ã© considerado 'com demanda'."
+    },
+    {
+      "parameters": { "respondWith": "allIncomingItems", "options": {} },
+      "id": "r-stock-orphan",
+      "name": "Respond stock-orphan",
+      "position": [2176, 2920],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "MySQL: production orders1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "MySQL: stock",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "MySQL: formula",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST orders": {
+      "main": [
+        [
+          {
+            "node": "MySQL: production orders1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST stock": {
+      "main": [
+        [
+          {
+            "node": "MySQL: stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MySQL: stock": {
+      "main": [
+        [
+          {
+            "node": "Respond stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST formula": {
+      "main": [
+        [
+          {
+            "node": "MySQL: formula",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MySQL: formula": {
+      "main": [
+        [
+          {
+            "node": "Respond formula",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MySQL: production orders1": {
+      "main": [
+        [
+          {
+            "node": "Respond orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST orders-summary":  { "main": [[{ "node": "MySQL: orders-summary",  "type": "main", "index": 0 }]] },
+    "MySQL: orders-summary":{ "main": [[{ "node": "Respond orders-summary", "type": "main", "index": 0 }]] },
+    "POST orders-detail":   { "main": [[{ "node": "MySQL: orders-detail",   "type": "main", "index": 0 }]] },
+    "MySQL: orders-detail": { "main": [[{ "node": "Respond orders-detail",  "type": "main", "index": 0 }]] },
+    "POST orders-blocked":  { "main": [[{ "node": "MySQL: orders-blocked",  "type": "main", "index": 0 }]] },
+    "MySQL: orders-blocked":{ "main": [[{ "node": "Respond orders-blocked", "type": "main", "index": 0 }]] },
+    "POST stock-summary":   { "main": [[{ "node": "MySQL: stock-summary",   "type": "main", "index": 0 }]] },
+    "MySQL: stock-summary": { "main": [[{ "node": "Respond stock-summary",  "type": "main", "index": 0 }]] },
+    "GET kpis":             { "main": [[{ "node": "MySQL: kpis",            "type": "main", "index": 0 }]] },
+    "MySQL: kpis":          { "main": [[{ "node": "Respond kpis",           "type": "main", "index": 0 }]] },
+    "POST ofm-decisions":         { "main": [[{ "node": "Get family aliases (ofm)",   "type": "main", "index": 0 }]] },
+    "Get family aliases (ofm)":   { "main": [[{ "node": "Get durometer bands (ofm)", "type": "main", "index": 0 }]] },
+    "Get durometer bands (ofm)":  { "main": [[{ "node": "MySQL: ofm-decisions",        "type": "main", "index": 0 }]] },
+    "MySQL: ofm-decisions":       { "main": [[{ "node": "Respond ofm-decisions",       "type": "main", "index": 0 }]] },
+    "POST stock-orphan":            { "main": [[{ "node": "Get family aliases (orphan)", "type": "main", "index": 0 }]] },
+    "Get family aliases (orphan)":  { "main": [[{ "node": "MySQL: stock-orphan",         "type": "main", "index": 0 }]] },
+    "MySQL: stock-orphan":  { "main": [[{ "node": "Respond stock-orphan",   "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "03d32a206f2d8840fce482e6c587726f18775bd9177e9401c00ca76d3086ad41"
+  }
+}

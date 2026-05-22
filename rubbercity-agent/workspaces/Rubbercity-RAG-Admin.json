@@ -1,0 +1,272 @@
+{
+  "name": "Rubbercity-RAG-Admin",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "rubbercity-rag-docs",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "a1000001-0000-4000-8000-000000000001",
+      "name": "Webhook - List Docs",
+      "position": [200, -200],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "zfx-rag-docs-list"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  m.file_id              AS id,\n  m.file_id,\n  m.title,\n  m.code,\n  m.url,\n  m.source,\n  m.mime_type,\n  m.category_id,\n  c.code  AS category_code,\n  c.name  AS category_name,\n  COALESCE((SELECT COUNT(*) FROM rubbercity_documents d WHERE d.metadata->>'file_id' = m.file_id), 0) AS chunk_count,\n  m.created_at,\n  m.updated_at AS last_indexed_at\nFROM rubbercity_document_metadata m\nLEFT JOIN rubbercity_document_categories c ON c.id = m.category_id\nORDER BY COALESCE(m.code, m.title, m.file_id);",
+        "options": {}
+      },
+      "id": "a1000001-0000-4000-8000-000000000002",
+      "name": "List Docs from DB",
+      "position": [420, -200],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": { "id": "REPLACE_ME_RUBBERCITY_DB", "name": "Rubbercity-DB" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Wrap as { docs: [...] } so the frontend's recursive extractor picks it up cleanly.\nconst docs = $input.all().map(i => i.json);\nreturn [{ json: { docs } }];"
+      },
+      "id": "a1000001-0000-4000-8000-000000000003",
+      "name": "Wrap Docs",
+      "position": [620, -200],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "a1000001-0000-4000-8000-000000000004",
+      "name": "Respond Docs",
+      "position": [820, -200],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-rag-doc-delete",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "a1000002-0000-4000-8000-000000000001",
+      "name": "Webhook - Delete Doc",
+      "position": [200, 0],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "zfx-rag-doc-delete"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Accept file_id from body, query string or `id`.\nconst b = $input.first().json || {};\nconst body = b.body || b;\nconst q = b.query || b.queryString || {};\nconst fileId = body.file_id || body.id || q.file_id || q.id;\nif (!fileId) throw new Error('file_id is required');\nreturn { fileId };"
+      },
+      "id": "a1000002-0000-4000-8000-000000000002",
+      "name": "Extract file_id (delete)",
+      "position": [420, 0],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH purged AS (\n  DELETE FROM rubbercity_documents\n   WHERE metadata->>'file_id' = '{{ $json.fileId }}'\n   RETURNING 1\n), purged_rows AS (\n  DELETE FROM rubbercity_document_rows\n   WHERE dataset_id = '{{ $json.fileId }}'\n   RETURNING 1\n)\nDELETE FROM rubbercity_document_metadata\n WHERE file_id = '{{ $json.fileId }}'\nRETURNING file_id AS deleted_file_id;",
+        "options": {}
+      },
+      "id": "a1000002-0000-4000-8000-000000000003",
+      "name": "Delete Doc from DB",
+      "position": [640, 0],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": { "id": "REPLACE_ME_RUBBERCITY_DB", "name": "Rubbercity-DB" }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ok', deleted: $json.deleted_file_id } }}",
+        "options": {}
+      },
+      "id": "a1000002-0000-4000-8000-000000000004",
+      "name": "Respond Delete",
+      "position": [860, 0],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-rag-purge-all",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "a1000003-0000-4000-8000-000000000001",
+      "name": "Webhook - Purge All",
+      "position": [200, 200],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "zfx-rag-purge-all"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "TRUNCATE TABLE rubbercity_documents RESTART IDENTITY;\nTRUNCATE TABLE rubbercity_document_rows RESTART IDENTITY;\nTRUNCATE TABLE rubbercity_document_metadata RESTART IDENTITY CASCADE;\nSELECT 'ok' AS status;",
+        "options": {}
+      },
+      "id": "a1000003-0000-4000-8000-000000000002",
+      "name": "Purge All RAG Tables",
+      "position": [420, 200],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": { "id": "REPLACE_ME_RUBBERCITY_DB", "name": "Rubbercity-DB" }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'success', message: 'Base RAG limpa.' } }}",
+        "options": {}
+      },
+      "id": "a1000003-0000-4000-8000-000000000003",
+      "name": "Respond Purge",
+      "position": [640, 200],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rubbercity-rag-upsert",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "a1000004-0000-4000-8000-000000000001",
+      "name": "Webhook - Upsert Metadata",
+      "position": [200, 400],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "zfx-rag-upsert"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize payload from front-end (sends JSON with file_id/title/code/etc.)\nconst b = $input.first().json || {};\nconst body = b.body || b;\nconst payload = {\n  file_id:        body.file_id || body.id,\n  title:          body.title || body.file_id || 'Sem título',\n  code:           body.code || null,\n  url:            body.url || null,\n  source:         body.source || 'upload',\n  mime_type:      body.mime_type || null,\n  category_id:    body.category_id || null,\n  category_code:  body.category_code || null,\n  schema:         body.schema ? JSON.stringify(body.schema) : null\n};\nif (!payload.file_id) throw new Error('file_id is required');\nreturn payload;"
+      },
+      "id": "a1000004-0000-4000-8000-000000000002",
+      "name": "Normalize Upsert Payload",
+      "position": [420, 400],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rubbercity_rag_upsert_metadata(\n  p_file_id       => '{{ $json.file_id }}',\n  p_title         => '{{ ($json.title || '').replace(/'/g, \"''\") }}',\n  p_code          => {{ $json.code         ? \"'\" + String($json.code).replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  p_url           => {{ $json.url          ? \"'\" + String($json.url).replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  p_source        => '{{ ($json.source || 'upload').replace(/'/g, \"''\") }}',\n  p_mime_type     => {{ $json.mime_type    ? \"'\" + String($json.mime_type).replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  p_schema        => {{ $json.schema       ? \"'\" + String($json.schema).replace(/'/g, \"''\") + \"'::jsonb\" : 'NULL' }},\n  p_category_id   => {{ $json.category_id  ? \"'\" + String($json.category_id).replace(/'/g, \"''\") + \"'::uuid\" : 'NULL' }},\n  p_category_code => {{ $json.category_code ? \"'\" + String($json.category_code).replace(/'/g, \"''\") + \"'\" : 'NULL' }}\n) AS resolved_category;",
+        "options": {}
+      },
+      "id": "a1000004-0000-4000-8000-000000000003",
+      "name": "Upsert Metadata RPC",
+      "position": [640, 400],
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": { "id": "REPLACE_ME_RUBBERCITY_DB", "name": "Rubbercity-DB" }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ok', resolved_category: $json.resolved_category } }}",
+        "options": {}
+      },
+      "id": "a1000004-0000-4000-8000-000000000004",
+      "name": "Respond Upsert",
+      "position": [860, 400],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+
+    {
+      "parameters": {
+        "content": "## Rubbercity — RAG Admin API\n\nQuatro webhooks usados pelo painel **Documentos** do front-end:\n\n| Método | Path | O que faz |\n|---|---|---|\n| GET | `/rubbercity-rag-docs` | Lista todos os documentos do RAG com categoria + contagem de chunks |\n| POST | `/rubbercity-rag-doc-delete` | Remove um documento (chunks + rows + metadata) por `file_id` |\n| POST | `/rubbercity-rag-purge-all` | TRUNCATE em `rubbercity_documents`, `_document_rows`, `_document_metadata` |\n| POST | `/rubbercity-rag-upsert` | Insere/atualiza `rubbercity_document_metadata` via RPC `rubbercity_rag_upsert_metadata()` |\n\nDB layer já existe nas migrations 008/009 (`rubbercity_rag_upsert_metadata`, `rubbercity_rag_purge_file`, etc.). Aqui usamos SQL direto via postgres node para evitar o guard `rubbercity_is_admin()` — a autorização é feita no front via Supabase Auth.",
+        "height": 360,
+        "width": 460
+      },
+      "id": "a1000099-0000-4000-8000-000000000001",
+      "name": "Sticky Note - Docs",
+      "position": [-200, -200],
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - List Docs": {
+      "main": [[{ "node": "List Docs from DB", "type": "main", "index": 0 }]]
+    },
+    "List Docs from DB": {
+      "main": [[{ "node": "Wrap Docs", "type": "main", "index": 0 }]]
+    },
+    "Wrap Docs": {
+      "main": [[{ "node": "Respond Docs", "type": "main", "index": 0 }]]
+    },
+
+    "Webhook - Delete Doc": {
+      "main": [[{ "node": "Extract file_id (delete)", "type": "main", "index": 0 }]]
+    },
+    "Extract file_id (delete)": {
+      "main": [[{ "node": "Delete Doc from DB", "type": "main", "index": 0 }]]
+    },
+    "Delete Doc from DB": {
+      "main": [[{ "node": "Respond Delete", "type": "main", "index": 0 }]]
+    },
+
+    "Webhook - Purge All": {
+      "main": [[{ "node": "Purge All RAG Tables", "type": "main", "index": 0 }]]
+    },
+    "Purge All RAG Tables": {
+      "main": [[{ "node": "Respond Purge", "type": "main", "index": 0 }]]
+    },
+
+    "Webhook - Upsert Metadata": {
+      "main": [[{ "node": "Normalize Upsert Payload", "type": "main", "index": 0 }]]
+    },
+    "Normalize Upsert Payload": {
+      "main": [[{ "node": "Upsert Metadata RPC", "type": "main", "index": 0 }]]
+    },
+    "Upsert Metadata RPC": {
+      "main": [[{ "node": "Respond Upsert", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "zfx-rag-admin-v1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "id": "RubbercityRAGAdmin",
+  "tags": []
+}
