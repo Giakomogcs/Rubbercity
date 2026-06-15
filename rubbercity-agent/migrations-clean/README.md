@@ -1,6 +1,6 @@
 # Rubbercity — Migrations (clean) para Supabase novo
 
-Versão consolidada e enxuta das migrations, pensada para rodar do zero num Supabase limpo. As 7 primeiras vêm da base Zanaflex (auth/ACL/RAG/chat). As **008 → 011** são específicas do agente **OFM** (Ordem de Fabricação de Massa) da Rubbercity. Cada arquivo tem o bloco `DOWN` comentado no final.
+Versão consolidada e enxuta das migrations, pensada para rodar do zero num Supabase limpo. As 7 primeiras vêm da base Zanaflex (auth/ACL/RAG/chat). As **008 → 014** são específicas do agente **OFM** (Ordem de Fabricação de Massa) da Rubbercity. Cada arquivo tem o bloco `DOWN` comentado no final.
 
 ## Ordem de execução
 
@@ -19,6 +19,9 @@ Execute na ordem numérica, uma de cada vez (Supabase Dashboard → SQL Editor �
 | 009 | `009_ofm_customer_overrides.sql` | Exceções por cliente (AMBEV PU 45/50→PU 50/55 VD, AVANÇO ABI 70/75→75/80, BRASMETAL 50%+50%, PRINTGRAF→FLEX)                                                                               |
 | 010 | `010_ofm_rules_rpc.sql`          | RPCs de consulta de regras: `ofm_resolve_formula`, `ofm_durometer_band`, `ofm_can_mix_colors`, `ofm_safety_margin`                                                                         |
 | 011 | `011_ofm_seeds.sql`              | Seeds das tabelas 008/009 a partir do PDF descritivo OFM da Rubbercity                                                                                                                     |
+| 012 | `012_ofm_priority_dim_and_run.sql` | Dimensão de prioridade/SLA e tabela de execução (run) do motor OFM                                                                                                                       |
+| 013 | `013_family_alias.sql`           | Aliases de família ERP→fórmula (`rubbercity_family_alias`) usados na injeção cross-DB do motor                                                                                             |
+| 014 | `014_color_alias_and_safety_margin.sql` | De-hardcode do motor: `rubbercity_color_alias` (código de cor ↔ tokens do ERP, ex. PT↔PRETA) + `rubbercity_safety_margin` (margem editável por família/dureza); `rubbercity_ofm_safety_margin` passa a LER a tabela. Remove o piso AG 90/30 e a margem 7%/8% fixos da query do motor |
 
 ## Pós-instalação
 
